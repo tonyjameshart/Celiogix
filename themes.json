@@ -1,0 +1,31 @@
+{
+  "themes": {
+    "light": {
+      "background": "#F9FAFB",
+      "surface": "#FFFFFF",
+      "primary": "#2563EB",
+      "secondary": "#64748B",
+      "accent": "#10B981",
+      "text": "#1F2937",
+      "mutedText": "#6B7280",
+      "border": "#E5E7EB",
+      "warning": "#F59E0B",
+      "danger": "#DC2626",
+      "success": "#059669"
+    },
+    "dark": {
+      "background": "#0B1220",
+      "surface": "#0F172A",
+      "primary": "#60A5FA",
+      "secondary": "#94A3B8",
+      "accent": "#34D399",
+      "text": "#E5E7EB",
+      "mutedText": "#9CA3AF",
+      "border": "#1F2937",
+      "warning": "#F59E0B",
+      "danger": "#F87171",
+      "success": "#10B981"
+    }
+  },
+  "default": "light"
+}
