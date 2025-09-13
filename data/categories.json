@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "name": "🧁 Baking & Mixes",
+      "subs": [
+        "Flours (almond, coconut, rice, sorghum, etc.)",
+        "Baking mixes (pancake, muffin, bread)",
+        "Thickeners (arrowroot, tapioca, xanthan gum)",
+        "Sweeteners (honey, maple syrup, coconut sugar)",
+        "Starch"
+      ]
+    },
+    {
+      "name": "🍝 Grains & Pasta",
+      "subs": [
+        "Gluten-free pasta (rice, quinoa, lentil-based)",
+        "Rice (white, brown, jasmine, wild)",
+        "Quinoa, millet, buckwheat",
+        "Gluten-free oats (certified only)"
+      ]
+    },
+    {
+      "name": "🍞 Breads & Wraps",
+      "subs": [
+        "GF sandwich bread",
+        "Bagels, English muffins",
+        "Tortillas (corn, cassava, almond flour)"
+      ]
+    },
+    {
+      "name": "🥫 Sauces & Condiments",
+      "subs": [
+        "Tamari, coconut aminos",
+        "Mustard, ketchup, mayo (check labels)",
+        "Salad dressings (GF certified)",
+        "Hot sauces, salsas"
+      ]
+    },
+    {
+      "name": "🍪 Snacks & Crackers",
+      "subs": [
+        "GF pretzels, chips, popcorn",
+        "Nut-based crackers",
+        "Dried fruit, trail mix (no malt or barley)",
+        "Protein bars (check for oats or wheat)",
+        "Cookies",
+        "Crackers",
+        "Candy"
+      ]
+    },
+    {
+      "name": "🧂 Spices & Seasonings",
+      "subs": [
+        "Pure herbs and spices (single-ingredient)",
+        "GF spice blends (taco, BBQ, curry)",
+        "Bouillon and soup bases (certified GF)"
+      ]
+    },
+    {
+      "name": "🥣 Breakfast Staples",
+      "subs": [
+        "GF cereals (corn, rice, millet-based)",
+        "Granola (certified GF)",
+        "Nut butters (no cross-contamination)"
+      ]
+    },
+    {
+      "name": "🧃 Shelf-Stable Beverages",
+      "subs": [
+        "Plant-based milks (almond, oat [GF], coconut)",
+        "Broths and stocks (GF certified)",
+        "Teas and coffees (watch for additives)"
+      ]
+    },
+    {
+      "name": "🧊 Canned & Jarred Goods",
+      "subs": [
+        "Beans, lentils, chickpeas",
+        "Tomatoes, tomato paste",
+        "Pickles, olives, sauerkraut"
+      ]
+    }
+  ]
+}

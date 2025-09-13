@@ -1,0 +1,170 @@
+# path: panels/base_panel.py
+from __future__ import annotations
+import tkinter as tk
+from tkinter import ttk, messagebox
+from typing import Callable, Iterable, List, Tuple, Optional, Any, Dict
+
+# Column spec: (key, heading, width, anchor) where anchor in {"w","e","c"}
+ColumnDef = Tuple[str, str, int, str]
+
+_ANCHOR = {"w": tk.W, "e": tk.E, "c": tk.CENTER}
+
+class BasePanel(ttk.Frame):
+    """
+    Common panel base with shared UI builders:
+      - build_search_bar(): compact 'Search' label + Entry + optional refresh button
+      - make_treeview(): standardized Treeview with scrollbars and column setup
+      - bind_edit_on_double_click(): wire double-click to edit_selected() (or a handler)
+      - confirm_delete(): Yes/No helper for bulk delete prompts
+      - set_status(): proxy to app.set_status
+    Panels should subclass this and implement build().
+    """
+    def __init__(self, master, app, **kw):
+        super().__init__(master, **kw)
+        self.app = app
+        self.db = app.db
+        self.bus = getattr(app, "bus", None)
+        self.theme = getattr(app, "theme", None)
+        self._widgets: Dict[str, Any] = {}
+        self.build()
+
+    # ---------- lifecycle ----------
+    def build(self) -> None:  # to be overridden by subclasses
+        pass
+
+    # ---------- messaging ----------
+    def info(self, msg: str):
+        messagebox.showinfo("Info", msg, parent=self.winfo_toplevel())
+
+    def warn(self, msg: str):
+        messagebox.showwarning("Warning", msg, parent=self.winfo_toplevel())
+
+    def error(self, msg: str):
+        messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
+
+    def set_status(self, msg: str):
+        if hasattr(self.app, "set_status") and callable(self.app.set_status):
+            self.app.set_status(msg)
+
+    # ---------- shared builders ----------
+    def build_search_bar(
+        self,
+        parent: Optional[tk.Misc] = None,
+        *,
+        label: str = "Search",
+        width: int = 36,
+        on_return: Optional[Callable[[str], None]] = None,
+        add_refresh_button: bool = True,
+        refresh_text: str = "Refresh",
+        padding: Tuple[int, int] = (8, 4),
+    ) -> Tuple[ttk.Frame, tk.StringVar, ttk.Entry]:
+        """
+        Create a compact search row.
+        Returns (frame, var, entry). Bind <Return> to on_return if provided.
+        """
+        host = parent or self
+        sp = getattr(getattr(self, "theme", None), "spacing", {"md": 8, "sm": 4})
+        frm = ttk.Frame(host, padding=(sp.get("md", 8), sp.get("sm", 4)), style="Card.TFrame")
+        lbl = ttk.Label(frm, text=label)
+        var = tk.StringVar()
+        ent = ttk.Entry(frm, textvariable=var, width=width)
+
+        lbl.grid(row=0, column=0, sticky="e")
+        ent.grid(row=0, column=1, sticky="w", padx=(6, 8))
+
+        if on_return:
+            ent.bind("<Return>", lambda _e: on_return(var.get()))
+
+        if add_refresh_button:
+            btn = ttk.Button(frm, text=refresh_text, command=lambda: on_return and on_return(var.get()))
+            btn.grid(row=0, column=2, padx=(0, 6))
+            self._widgets["search_refresh_btn"] = btn
+
+        self._widgets["search_frame"] = frm
+        self._widgets["search_var"] = var
+        self._widgets["search_entry"] = ent
+        return frm, var, ent
+
+    def make_treeview(
+        self,
+        parent: Optional[tk.Misc],
+        columns: List[ColumnDef],
+        *,
+        selectmode: str = "extended",
+        show_headings: bool = True,
+        bind_double_click: bool = True,
+        tree_key: str = "tree",
+    ) -> ttk.Treeview:
+        """
+        Create a Treeview with vertical & horizontal scrollbars and configured columns.
+        Returns the Treeview instance.
+        """
+        if parent is None:
+            parent = self
+        sp = getattr(getattr(self, "theme", None), "spacing", {"md": 8, "sm": 4})
+        frame = ttk.Frame(parent, padding=(sp.get("md", 8), sp.get("sm", 4)), style="Card.TFrame")
+        frame.grid(row=0, column=0, sticky="nsew")
+        # Make parent area resizable by default
+        try:
+            parent.grid_rowconfigure(0, weight=1)
+            parent.grid_columnconfigure(0, weight=1)
+        except Exception:
+            pass
+
+        col_keys = [c[0] for c in columns]
+        tv = ttk.Treeview(
+            frame,
+            columns=col_keys,
+            show="headings" if show_headings else "tree",
+            selectmode=selectmode,
+        )
+        tv.grid(row=0, column=0, sticky="nsew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        for key, heading, width, anc in columns:
+            tv.heading(key, text=heading, anchor=_ANCHOR.get(anc, tk.W))
+            tv.column(
+                key,
+                width=width,
+                anchor=_ANCHOR.get(anc, tk.W),
+                stretch=(key in {c[0] for c in columns if c[3] in ("w", "c")}),
+            )
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tv.yview)
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=tv.xview)
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        tv.configure(yscroll=vsb.set, xscroll=hsb.set)
+
+        if bind_double_click:
+            # If subclass defines edit_selected(), use it by default
+            handler = getattr(self, "edit_selected", None)
+            if callable(handler):
+                tv.bind("<Double-1>", lambda _e: handler())
+
+        self._widgets[tree_key] = tv
+        self._widgets[f"{tree_key}_frame"] = frame
+        return tv
+
+    def bind_edit_on_double_click(self, tv: ttk.Treeview, handler: Optional[Callable[[], None]] = None) -> None:
+        """
+        Bind a double-click handler for a given Treeview. Defaults to self.edit_selected().
+        """
+        fn = handler or getattr(self, "edit_selected", None)
+        if callable(fn):
+            tv.bind("<Double-1>", lambda _e: fn())
+
+    # ---------- convenience helpers ----------
+    def get_search_text(self) -> str:
+        var = self._widgets.get("search_var")
+        return var.get().strip() if isinstance(var, tk.StringVar) else ""
+
+    def clear_tree(self, tv: Optional[ttk.Treeview] = None) -> None:
+        tv = tv or self._widgets.get("tree")
+        if isinstance(tv, ttk.Treeview):
+            for item in tv.get_children():
+                tv.delete(item)
+
+    def confirm_delete(self, n: int) -> bool:
+        return messagebox.askyesno("Delete", f"Delete {n} item(s)?", parent=self.winfo_toplevel())
