@@ -6,7 +6,7 @@ from typing import Optional, List, Tuple
 import datetime, calendar
 
 from panels.base_panel import BasePanel
-from utils.export import export_table_html
+from utils.export import export_table_html, export_recipes_html
 
 # ------------------------- Tiny modal date picker -------------------------
 class _DatePickerDialog(tk.Toplevel):
@@ -177,7 +177,7 @@ class MenuPanel(BasePanel):
         vsb.grid(row=1, column=1, sticky="ns")
 
         # Add double-click event to recipe treeview
-        tuv.bind("<Double-1>", self._print_recipe_from_selection)
+        tuv.bind("<Double-1>", self._open_recipe_html)
 
         # Menus
         m_menu = tk.Menu(self, tearoff=0)
@@ -396,35 +396,16 @@ class MenuPanel(BasePanel):
         )
 
     def _find_cookbook_panel(self):
-        """
-        Search for an instance of CookbookPanel in the parent widget hierarchy.
-        Returns the instance if found, else None.
-        """
-        # Try direct app attribute first
-        app = getattr(self, "app", None)
-        if app and hasattr(app, "cookbook_panel"):
-            return app.cookbook_panel
+        # Directly access the cookbook_panel attribute from the app
+        return getattr(self.app, "cookbook_panel", None)
 
-        # Search among children of the app/master for CookbookPanel
-        master = getattr(self, "master", None)
-        for widget in (getattr(app, "children", {}) if app else {}):
-            panel = app.children[widget]
-            if panel.__class__.__name__ == "CookbookPanel":
-                return panel
-        for widget in (getattr(master, "children", {}) if master else {}):
-            panel = master.children[widget]
-            if panel.__class__.__name__ == "CookbookPanel":
-                return panel
-        return None
-
-    def _print_recipe_from_selection(self, event: tk.Event) -> None:
-        """Handles double-click event on recipe treeview to print the selected recipe."""
+    def _open_recipe_html(self, event: tk.Event) -> None:
         tvr = self._tree_rec
         if not isinstance(tvr, ttk.Treeview):
             return
         sel = tvr.selection()
         if len(sel) != 1:
-            messagebox.showinfo("Menu", "Select one recipe to print.", parent=self.winfo_toplevel())
+            self.show_info("Menu", "Select one recipe to print.")
             return
 
         iid = sel[0]
@@ -432,9 +413,24 @@ class MenuPanel(BasePanel):
             return
 
         rid = int(iid.split("::", 1)[1])
-        # Find the CookbookPanel instance robustly
-        cookbook_panel = self._find_cookbook_panel()
-        if cookbook_panel and hasattr(cookbook_panel, "print_recipe"):
-            cookbook_panel.print_recipe(rid)
-        else:
-            messagebox.showerror("Error", "Cookbook panel not found or does not support printing.", parent=self.winfo_toplevel())
+        # Fetch full recipe data from the database
+        recipe = self.db.execute(
+            """
+            SELECT title, source, prep_time, cook_time, servings, ingredients, instructions, url, tags, rating
+            FROM recipes
+            WHERE id=?
+            """,
+            (rid,)
+        ).fetchone()
+        if not recipe:
+            self.show_error("Error", "Recipe not found.")
+            return
+
+        # Convert sqlite3.Row to dict for export
+        recipe_dict = dict(recipe)
+        export_recipes_html(
+            recipes=[recipe_dict],
+            title=recipe_dict.get("title", "Recipe"),
+            subtitle="Ready for printing",
+            open_after=True
+        )

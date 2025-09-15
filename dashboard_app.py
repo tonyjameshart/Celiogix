@@ -1,4 +1,4 @@
-# path: dashboard_app.py
+﻿# path: dashboard_app.py
 from __future__ import annotations
 
 import sys
@@ -6,6 +6,7 @@ import logging
 from typing import Any, Optional, Protocol
 
 from app import App
+from panels import CookbookPanel, MenuPanel
 
 
 class _Closable(Protocol):
@@ -31,6 +32,10 @@ def main() -> int:
     app: Optional[App] = None
     try:
         app = App()
+        # In your main app class (e.g., DashboardApp or App)
+        app.cookbook_panel = CookbookPanel(master=app, app=app)
+        app.menu_panel = MenuPanel(master=app, app=app)
+        
         app.mainloop()
         return 0
     except KeyboardInterrupt:

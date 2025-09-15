@@ -23,7 +23,8 @@ class BasePanel(tk.Frame):
         self.app = app
         self.db = app.db
         self.bus = getattr(app, "bus", None)
-        self.theme = getattr(app, "theme", None)
+        self.theme = make_theme_instance(get_active_theme_name())
+        self.theme.apply(self.root)  # top-level Tk
         self._widgets: Dict[str, Any] = {}
         self.build()
 

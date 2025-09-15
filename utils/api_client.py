@@ -10,3 +10,8 @@ class APIClient:
         except Exception as e:
             logger.error(f"API error: {e}")
             return None
+        cookbook_panel = getattr(self.app, "cookbook_panel", None)
+        if cookbook_panel and hasattr(cookbook_panel, "print_recipe"):
+            cookbook_panel.print_recipe(rid)
+        else:
+            self.show_error("Error", "Cookbook panel not found or does not support printing.")

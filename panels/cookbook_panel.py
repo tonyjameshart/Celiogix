@@ -1,5 +1,4 @@
-#path: panels/cookbook_panel.py
-from __future__ import annotations
+﻿from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Optional, List, Tuple
@@ -517,3 +516,7 @@ class CookbookPanel(BasePanel):
             meta = {"Count": len(recipes)},
             open_after = True,
         )
+
+    def print_recipe(self, recipe_id: int):
+        """Prints or exports the recipe with the given ID."""
+        # ... implementation ...
