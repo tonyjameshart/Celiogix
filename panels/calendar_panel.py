@@ -1,63 +1,125 @@
-﻿# panels/calendar_panel.py
+﻿# path: panels/calendar_panel.py
 from __future__ import annotations
+
+import calendar
+import datetime as _dt
 import sqlite3
 import tkinter as tk
-from tkinter import ttk
-import calendar, datetime
+from tkinter import ttk, messagebox
+
+from typing import Dict, List
+
 from .base_panel import BasePanel
 
-def _iso(d: datetime.date) -> str:
-    return d.strftime("%Y-%m-%d")
+
+# ---------- small helpers ----------
+
+def _iso(d: _dt.date) -> str:
+    return d.isoformat()
+
+
+def _clamp_int(s: str, lo: int, hi: int, default: int) -> int:
+    try:
+        v = int(s)
+        if v < lo or v > hi:
+            return default
+        return v
+    except Exception:
+        return default
+
+
+def _shift_year_month(year: int, month: int, delta_months: int) -> (int, int):
+    # month is 1..12
+    i = (year * 12 + (month - 1)) + delta_months
+    y = i // 12
+    m = (i % 12) + 1
+    return y, m
+
 
 class CalendarPanel(BasePanel):
-    def build(self):
-        s = self.app.theme.spacing
-        top = ttk.Frame(self); top.pack(fill="x", padx=s["md"], pady=s["sm"])
-        ttk.Label(top, text="Calendar").pack(side="left")
+    """
+    Unified calendar: overlays Menu, Health Log, and simple Appointments.
+    - Arrow keys navigate months/years.
+    - Double-click a day or hit '+' to add a quick appointment.
+    - Robust to schema drift: tries multiple known table/column names for menu/health.
+    """
 
-        self.month_var = tk.StringVar()
+    # ------------- UI build -------------
+    def build(self) -> None:
+        # theme bits (safe defaults even if app.theme is a simple shim)
+        theme = getattr(self.app, "theme", None)
+        spacing = getattr(theme, "spacing", {"sm": 4, "md": 8, "lg": 12})
+        primary = getattr(theme, "primary", "#2563eb")
+        highlight = getattr(theme, "highlight", "#e0e7ff")
+        background = getattr(theme, "background", None)
+        font_family = getattr(theme, "font_family", "Segoe UI")
+
+        st = ttk.Style(self)
+        # base styles (app sets Card.TFrame / Muted.TLabel; we add/override a couple)
+        try:
+            st.configure("Today.TLabel", foreground=primary, font=(font_family, 10, "bold"))
+            st.configure("Hover.TFrame", background=highlight)
+            if background:
+                st.configure("Card.TFrame", background=background, relief="flat")
+        except Exception:
+            pass
+
+        # header (month controls)
+        hdr = ttk.Frame(self, padding=(spacing["md"], spacing["sm"]))
+        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.columnconfigure(5, weight=1)
+
+        ttk.Label(hdr, text="Year").grid(row=0, column=0, padx=(0, 6))
         self.year_var = tk.StringVar()
+        y_now = _dt.date.today().year
+        self.year_var.set(str(y_now))
+        ent_year = ttk.Entry(hdr, width=6, textvariable=self.year_var)
+        ent_year.grid(row=0, column=1, padx=(0, spacing["md"]))
+        ent_year.bind("<Return>", lambda _e: self.refresh())
 
-        today = datetime.date.today()
-        self.month_var.set(str(today.month))
-        self.year_var.set(str(today.year))
+        ttk.Label(hdr, text="Month").grid(row=0, column=2, padx=(0, 6))
+        self.month_var = tk.StringVar()
+        m_now = _dt.date.today().month
+        self.month_var.set(str(m_now))
+        ent_month = ttk.Entry(hdr, width=4, textvariable=self.month_var)
+        ent_month.grid(row=0, column=3, padx=(0, spacing["md"]))
+        ent_month.bind("<Return>", lambda _e: self.refresh())
 
-        # Controls
-        ttk.Button(top, text="Today", command=self._jump_today).pack(side="right")
-        months = [str(i) for i in range(1, 13)]
-        ttk.Combobox(top, values=months, textvariable=self.month_var, width=5, state="readonly").pack(side="right")
-        years = [str(y) for y in range(2000, 2101)]
-        ttk.Combobox(top, values=years, textvariable=self.year_var, width=7, state="readonly").pack(side="right")
+        ttk.Button(hdr, text="◀", width=3, command=lambda: self._shift_month(-1)).grid(row=0, column=4, padx=(0, 4))
+        ttk.Button(hdr, text="▶", width=3, command=lambda: self._shift_month(+1)).grid(row=0, column=5, padx=(0, spacing["md"]))
+        ttk.Button(hdr, text="Today", command=self._jump_today).grid(row=0, column=6)
 
-        # Bind selection changes to refresh:
-        self.month_var.trace_add("write", lambda *_, sv=self.month_var: self.refresh())
-        self.year_var.trace_add("write", lambda *_, sv=self.year_var: self.refresh())
+        # weekday header (Mon..Sun or Sun..Sat based on settings)
+        wk_hdr = ttk.Frame(self, padding=(spacing["md"], spacing["sm"]))
+        wk_hdr.grid(row=1, column=0, sticky="ew")
+        for i in range(7):
+            lbl = ttk.Label(wk_hdr, text="", style="Muted.TLabel")
+            lbl.grid(row=0, column=i, sticky="w", padx=(6, 0))
+            wk_hdr.grid_columnconfigure(i, weight=1)
+        self._weekday_labels = [c for c in wk_hdr.winfo_children() if isinstance(c, ttk.Label)]
 
-        # Use grid for the main container
-        self.container = ttk.Frame(self)
-        self.container.grid(row=1, column=0, sticky="nsew", padx=s["md"], pady=s["sm"])
-        self.grid_rowconfigure(1, weight=1)
+        # calendar container
+        self.container = ttk.Frame(self, padding=(spacing["md"], spacing["sm"]))
+        self.container.grid(row=2, column=0, sticky="nsew")
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # Ensure our lightweight appointments table exists
+        # DB table for lightweight appointments
         self._ensure_appointments_table()
 
+        # first render
         self.refresh()
 
+        # keyboard navigation
         self.bind_all("<Left>", self._move_calendar_left)
         self.bind_all("<Right>", self._move_calendar_right)
         self.bind_all("<Up>", self._move_calendar_up)
         self.bind_all("<Down>", self._move_calendar_down)
 
-        # --- NEW THEME CODE ---
-        theme = self.app.theme
-        style = ttk.Style()
-        style.configure("Today.TLabel", foreground=theme.primary, font=(theme.font_family, 10, "bold"))
-        style.configure("Hover.TFrame", background=theme.highlight)
-        style.configure("Card.TFrame", background=theme.background)
-    # ---------- data helpers ----------
-    def _ensure_appointments_table(self):
-        self.db.execute("""
+    # ------------- data helpers -------------
+    def _ensure_appointments_table(self) -> None:
+        self.db.execute(
+            """
             CREATE TABLE IF NOT EXISTS appointments (
                 id     INTEGER PRIMARY KEY,
                 date   TEXT NOT NULL,        -- ISO YYYY-MM-DD
@@ -65,11 +127,12 @@ class CalendarPanel(BasePanel):
                 title  TEXT NOT NULL,
                 notes  TEXT DEFAULT ''
             )
-        """)
+            """
+        )
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(date)")
         self.db.commit()
 
-    def _try_select(self, sql_list):
+    def _try_select(self, sql_list: List[str]):
         cur = self.db.cursor()
         for sql in sql_list:
             try:
@@ -78,48 +141,52 @@ class CalendarPanel(BasePanel):
                 continue
         return []
 
-    # ---------- UI refresh ----------
-    def refresh(self):
-        # Show spinner/progress bar
-        self._progress = ttk.Progressbar(self.container, mode="indeterminate")
-        self._progress.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        self._progress.start()
+    # ------------- UI refresh -------------
+    def refresh(self) -> None:
+        # spinner
+        pb = ttk.Progressbar(self.container, mode="indeterminate")
+        pb.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        pb.start()
         self.container.update_idletasks()
+
         try:
-            # Clear current month grid
-            for w in self.container.winfo_children():
+            # wipe existing month grid
+            for w in list(self.container.winfo_children()):
                 w.destroy()
 
-            # Parse month/year (ignore bad input)
-            try:
-                y = int(self.year_var.get()); m = int(self.month_var.get())
-                first = datetime.date(y, m, 1)
-            except Exception:
-                return
+            # parse month/year
+            y = _clamp_int(self.year_var.get(), 1900, 3000, _dt.date.today().year)
+            m = _clamp_int(self.month_var.get(), 1, 12, _dt.date.today().month)
+            first = _dt.date(y, m, 1)
 
-            start_day = getattr(self.app.settings, "START_DAY", "Monday")
-            firstweekday = 0 if start_day == "Monday" else 6
+            # weekday header text (Mon/Sun first)
+            start_day = getattr(getattr(self.app, "settings", object()), "START_DAY", "Monday")
+            mon_first = (str(start_day).strip().lower().startswith("mon"))
+            firstweekday = 0 if mon_first else 6
+            for i, lab in enumerate(self._weekday_labels):
+                idx = (i if mon_first else (i - 6))  # if Sunday first, show Sun..Sat
+                lab.config(text=calendar.day_abbr[(firstweekday + i) % 7])
+
             cal = calendar.Calendar(firstweekday=firstweekday)
             weeks = cal.monthdatescalendar(y, m)
 
-            # Pull data, robust to schema drift:
-            # Menu (prefer correct schema, fallback to old)
+            # pull data (be forgiving to schema drift)
             menus = self._try_select([
                 "SELECT substr(date,1,10) AS d, meal FROM menu_plan",
                 "SELECT substr(date,1,10) AS d, meal_type AS meal FROM menu_plans",
             ])
-            # Health logs (several potential names/columns)
             health = self._try_select([
                 "SELECT substr(date,1,10) AS d, symptoms FROM health_logs",
                 "SELECT substr(date,1,10) AS d, symptoms FROM health_log",
                 "SELECT substr(date,1,10) AS d, notes AS symptoms FROM health_log",
             ])
-            # Appointments (we control this)
             appts = self._try_select([
-                "SELECT substr(date,1,10) AS d, time, title FROM appointments"
+                "SELECT substr(date,1,10) AS d, time, title FROM appointments",
             ])
 
-            menu_map, health_map, appt_map = {}, {}, {}
+            menu_map: Dict[str, List[str]] = {}
+            health_map: Dict[str, List[str]] = {}
+            appt_map: Dict[str, List[str]] = {}
 
             for r in menus:
                 menu_map.setdefault(r["d"], []).append((r["meal"] or "").strip())
@@ -127,38 +194,37 @@ class CalendarPanel(BasePanel):
             for r in health:
                 txt = (r["symptoms"] or "").strip()
                 if txt:
-                    health_map.setdefault(r["d"], []).append(txt[:40])
+                    health_map.setdefault(r["d"], []).append(txt[:60])
 
             for r in appts:
                 t = (r["time"] or "").strip()
                 title = (r["title"] or "").strip()
                 line = f"{t} {title}".strip() if t else title
                 if line:
-                    appt_map.setdefault(r["d"], []).append(line[:40])
+                    appt_map.setdefault(r["d"], []).append(line[:60])
 
-            # Build month grid using grid layout
+            # build month grid
+            today = _dt.date.today()
             for r, wk in enumerate(weeks):
                 row = ttk.Frame(self.container)
                 row.grid(row=r, column=0, sticky="ew")
-                row.columnconfigure(tuple(range(7)), weight=1)  # 7 days per week
+                for c in range(7):
+                    row.grid_columnconfigure(c, weight=1)
 
                 for c, d in enumerate(wk):
+                    in_month = (d.month == m)
                     box = ttk.Frame(row, style="Card.TFrame", padding=6)
                     box.grid(row=0, column=c, sticky="nsew", padx=4, pady=4)
-                    row.columnconfigure(c, weight=1)
 
-                    # Day header: day number + quick add
-                    hdr = ttk.Frame(box); hdr.pack(fill="x")
-                    is_today = (d == datetime.date.today())
-                    lbl_style = "Today.TLabel" if is_today else ("Muted.TLabel" if not in_month else "TLabel")
+                    # day header: number + quick add
+                    hdr = ttk.Frame(box)
+                    hdr.pack(fill="x")
+                    lbl_style = "Today.TLabel" if d == today else ("Muted.TLabel" if not in_month else "TLabel")
                     day_lbl = ttk.Label(hdr, text=str(d.day), style=lbl_style)
                     day_lbl.pack(side="left", anchor="nw")
 
-                    add_btn = ttk.Button(hdr, text="+", width=2, command=lambda dd=d: self._add_appt_dialog(_iso(dd)))
-                    add_btn.pack(side="right")
+                    ttk.Button(hdr, text="+", width=2, command=lambda dd=d: self._add_appt_dialog(_iso(dd))).pack(side="right")
 
-                    # Dim days outside the current month
-                    in_month = (d.month == m)
                     if not in_month:
                         try:
                             day_lbl.configure(style="Muted.TLabel")
@@ -167,7 +233,7 @@ class CalendarPanel(BasePanel):
 
                     ds = _iso(d)
 
-                    # Render entries
+                    # entries
                     for mt in menu_map.get(ds, []):
                         ttk.Label(box, text=f"🍽 {mt}", style="Muted.TLabel").pack(anchor="w")
                     for s in health_map.get(ds, []):
@@ -175,49 +241,52 @@ class CalendarPanel(BasePanel):
                     for a in appt_map.get(ds, []):
                         ttk.Label(box, text=f"📌 {a}", style="Muted.TLabel").pack(anchor="w")
 
-                    # Double-click anywhere in the day box to add appt
-                    box.bind("<Double-1>", lambda e, dd=d: self._add_appt_dialog(_iso(dd)))
+                    # interactions
+                    box.bind("<Double-1>", lambda _e, dd=d: self._add_appt_dialog(_iso(dd)))
+                    box.bind("<Button-1>", lambda _e, dd=ds: self._show_day_details(dd, menu_map, health_map, appt_map))
+                    box.bind("<Enter>", lambda e: e.widget.configure(style="Hover.TFrame"))
+                    box.bind("<Leave>", lambda e: e.widget.configure(style="Card.TFrame"))
 
-                    def on_enter(e):
-                        e.widget.configure(style="Hover.TFrame")
-                    def on_leave(e):
-                        e.widget.configure(style="Card.TFrame")
-
-                    style.configure("Hover.TFrame", background="#e0e7ff")  # light blue highlight
-
-                    box.bind("<Enter>", on_enter)
-                    box.bind("<Leave>", on_leave)
-
-                    has_event = ds in menu_map or ds in health_map or ds in appt_map
-                    if has_event:
-                        ttk.Label(hdr, text="•", foreground="#2563eb").pack(side="right", padx=(2,0))
-
-                    box.bind("<Button-1>", lambda e, dd=ds: self._show_day_details(dd, menu_map, health_map, appt_map))
-
-            # Highlight today's date
-            today_iso = _iso(datetime.date.today())
-            for child in self.container.winfo_children():
-                if isinstance(child, ttk.Frame):
-                    for label in child.winfo_children():
-                        if isinstance(label, ttk.Label):
-                            text = label.cget("text")
-                            if text and text.startswith(today_iso):
-                                label.configure(style="Today.TLabel")
+            self.set_status(f"Calendar — {first.strftime('%B %Y')}")
         except Exception as ex:
-            self._show_error_message(str(ex))
+            messagebox.showerror("Calendar", str(ex), parent=self.winfo_toplevel())
         finally:
-            # Remove spinner/progress bar
-            self._progress.stop()
-            self._progress.destroy()
+            try:
+                pb.stop()
+                pb.destroy()
+            except Exception:
+                pass
 
-    def _jump_today(self):
-        t = datetime.date.today()
+    # ------------- navigation -------------
+    def _shift_month(self, delta: int) -> None:
+        y = _clamp_int(self.year_var.get(), 1900, 3000, _dt.date.today().year)
+        m = _clamp_int(self.month_var.get(), 1, 12, _dt.date.today().month)
+        y2, m2 = _shift_year_month(y, m, delta)
+        self.year_var.set(str(y2))
+        self.month_var.set(str(m2))
+        self.refresh()
+
+    def _jump_today(self) -> None:
+        t = _dt.date.today()
         self.year_var.set(str(t.year))
         self.month_var.set(str(t.month))
         self.refresh()
 
-    # ---------- appointment dialog ----------
-    def _add_appt_dialog(self, date_iso: str):
+    # arrow keys
+    def _move_calendar_left(self, _e=None):  # previous month
+        self._shift_month(-1)
+
+    def _move_calendar_right(self, _e=None):  # next month
+        self._shift_month(+1)
+
+    def _move_calendar_up(self, _e=None):  # previous year
+        self._shift_month(-12)
+
+    def _move_calendar_down(self, _e=None):  # next year
+        self._shift_month(+12)
+
+    # ------------- dialogs -------------
+    def _add_appt_dialog(self, date_iso: str) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(f"Add Appointment — {date_iso}")
         dlg.transient(self.winfo_toplevel())
@@ -226,39 +295,41 @@ class CalendarPanel(BasePanel):
 
         frm = ttk.Frame(dlg, padding=8); frm.grid(row=0, column=0, sticky="nsew")
 
-        v_time  = tk.StringVar(value="")
+        v_time = tk.StringVar(value="")
         v_title = tk.StringVar(value="")
         v_notes = tk.StringVar(value="")
 
         def row(label, widget, i):
-            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="e", padx=(0,8), pady=(0,4))
-            widget.grid(row=i, column=1, sticky="ew", pady=(0,4))
-
+            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="e", padx=(0, 8), pady=(0, 4))
+            widget.grid(row=i, column=1, sticky="ew", pady=(0, 4))
         row("Time (HH:MM)", ttk.Entry(frm, textvariable=v_time, width=10), 0)
         row("Title",        ttk.Entry(frm, textvariable=v_title, width=28), 1)
         row("Notes",        ttk.Entry(frm, textvariable=v_notes, width=32), 2)
         frm.grid_columnconfigure(1, weight=1)
 
+        err = ttk.Label(frm, text="", foreground="red")
+        err.grid(row=3, column=1, sticky="w")
+
         def save():
             title = v_title.get().strip()
             if not title:
-                ttk.Label(frm, text="Title is required", foreground="red").grid(row=3, column=1, sticky="w")
+                err.configure(text="Title is required")
                 return
             time = v_time.get().strip()
             notes = v_notes.get().strip()
             self.db.execute(
                 "INSERT INTO appointments(date,time,title,notes) VALUES(?,?,?,?)",
-                (date_iso, time, title, notes)
+                (date_iso, time, title, notes),
             )
             self.db.commit()
             dlg.destroy()
             self.refresh()
 
-        btns = ttk.Frame(dlg, padding=(8,6)); btns.grid(row=1, column=0, sticky="e")
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).grid(row=0, column=0, padx=(0,6))
+        btns = ttk.Frame(dlg, padding=(8, 6)); btns.grid(row=1, column=0, sticky="e")
+        ttk.Button(btns, text="Cancel", command=dlg.destroy).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(btns, text="Save",   command=save).grid(row=0, column=1)
 
-    def _show_day_details(self, date_iso: str, menu_map, health_map, appt_map):
+    def _show_day_details(self, date_iso: str, menu_map, health_map, appt_map) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(f"Details for {date_iso}")
         dlg.transient(self.winfo_toplevel())
@@ -268,42 +339,15 @@ class CalendarPanel(BasePanel):
         frm = ttk.Frame(dlg, padding=8)
         frm.pack(fill="both", expand=True)
 
-        def add_section(label, items, icon=""):
+        def add_section(label: str, items: List[str], icon: str = ""):
             if items:
-                ttk.Label(frm, text=f"{icon} {label}:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(6,0))
-                for item in items:
-                    ttk.Label(frm, text=f"  {item}", wraplength=400).pack(anchor="w")
+                ttk.Label(frm, text=f"{icon} {label}:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(6, 2))
+                for it in items:
+                    ttk.Label(frm, text=f"• {it}", style="Muted.TLabel").pack(anchor="w")
 
         add_section("Menu", menu_map.get(date_iso, []), "🍽")
         add_section("Health", health_map.get(date_iso, []), "🩺")
         add_section("Appointments", appt_map.get(date_iso, []), "📌")
 
-        ttk.Button(frm, text="Close", command=dlg.destroy).pack(anchor="e", pady=(12,0))
-
-    def _move_calendar_left(self, event=None):
-        self._move_day(-1)
-
-    def _move_calendar_right(self, event=None):
-        self._move_day(1)
-
-    def _move_calendar_up(self, event=None):
-        self._move_day(-7)
-
-    def _move_calendar_down(self, event=None):
-        self._move_day(7)
-
-    def _move_day(self, delta):
-        try:
-            y = int(self.year_var.get())
-            m = int(self.month_var.get())
-            d = getattr(self, "selected_day", datetime.date.today())
-            new_date = d + datetime.timedelta(days=delta)
-            self.year_var.set(str(new_date.year))
-            self.month_var.set(str(new_date.month))
-            self.selected_day = new_date
-            self.refresh()
-        except Exception:
-            pass
-
-    def _show_error_message(self, msg):
-        tk.messagebox.showerror("Calendar Error", msg, parent=self.winfo_toplevel())
+        ttk.Frame(frm).pack(fill="x", pady=(8, 0))
+        ttk.Button(frm, text="Close", command=dlg.destroy).pack(anchor="e", pady=(8, 0))

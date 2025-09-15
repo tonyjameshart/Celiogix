@@ -1,12 +1,21 @@
-﻿from __future__ import annotations
+﻿# panels/base_panel.py
+from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Iterable, List, Tuple, Optional, Any, Dict
 
+# Theme services (provides make_theme_instance/get_active_theme_name)
+# Falls back gracefully if services are unavailable during early boot.
+try:
+    from services.themes import make_theme_instance, get_active_theme_name  # theme façade
+except Exception:  # pragma: no cover
+    make_theme_instance = None
+    get_active_theme_name = None
+
 # Column spec: (key, heading, width, anchor) where anchor in {"w","e","c"}
 ColumnDef = Tuple[str, str, int, str]
-
 _ANCHOR = {"w": tk.W, "e": tk.E, "c": tk.CENTER}
+
 
 class BasePanel(tk.Frame):
     """
@@ -23,8 +32,20 @@ class BasePanel(tk.Frame):
         self.app = app
         self.db = app.db
         self.bus = getattr(app, "bus", None)
-        self.theme = make_theme_instance(get_active_theme_name())
-        self.theme.apply(self.root)  # top-level Tk
+
+        # Prefer an app-provided theme; otherwise initialize from active theme.
+        self.theme = getattr(app, "theme", None)
+        if self.theme is None and make_theme_instance and get_active_theme_name:
+            try:
+                self.theme = make_theme_instance(get_active_theme_name())
+                # stash back on app so other panels share it
+                setattr(self.app, "theme", self.theme)
+                # apply to the toplevel immediately
+                self.theme.apply(self.winfo_toplevel())
+            except Exception:
+                # Don’t crash panels if theming isn’t ready
+                pass
+
         self._widgets: Dict[str, Any] = {}
         self.build()
 
@@ -147,6 +168,62 @@ class BasePanel(tk.Frame):
         self._widgets[f"{tree_key}_frame"] = frame
         return tv
 
+    def freeze_treeview_size(self, tree_key: str = "tree") -> None:
+        """
+        Stop a Treeview from resizing with the window:
+          - make columns non-stretch
+          - lock the wrapper frame’s size
+          - remove 'nsew' stickiness
+          - set that grid row/col weight to 0
+        Works with trees created via make_treeview() (uses *_frame key).
+        """
+        tv = self._widgets.get(tree_key)
+        frame = self._widgets.get(f"{tree_key}_frame")
+        if not isinstance(tv, ttk.Treeview) or frame is None:
+            return
+
+        # 1) Make columns fixed width (no stretch)
+        cols = tv.cget("columns")
+        for c in cols:
+            try:
+                tv.column(c, stretch=False)
+            except Exception:
+                pass
+
+        # 2) Compute a sensible fixed pixel width/height for wrapper frame
+        frame.update_idletasks()
+        try:
+            total_w = sum(int(tv.column(c, "width")) for c in cols) + 24  # scrollbar allowance
+        except Exception:
+            total_w = tv.winfo_reqwidth()
+        total_h = tv.winfo_reqheight() + 18  # header + hscroll allowance
+
+        # 3) Lock the frame size and stop geometry propagation
+        try:
+            frame.configure(width=total_w, height=total_h)
+            frame.grid_propagate(False)
+        except Exception:
+            pass
+
+        # 4) Remove 'nsew' stickiness on the frame (keep it top-left)
+        info = {}
+        try:
+            info = frame.grid_info()
+            frame.grid(sticky="nw")
+        except Exception:
+            pass
+
+        # 5) Ensure that grid cell doesn’t expand
+        parent = frame.master
+        try:
+            r = int(info.get("row", 0))
+            c = int(info.get("column", 0))
+            parent.grid_rowconfigure(r, weight=0)
+            parent.grid_columnconfigure(c, weight=0)
+        except Exception:
+            pass
+
+
     def bind_edit_on_double_click(self, tv: ttk.Treeview, handler: Optional[Callable[[], None]] = None) -> None:
         """
         Bind a double-click handler for a given Treeview. Defaults to self.edit_selected().
@@ -165,6 +242,3 @@ class BasePanel(tk.Frame):
         if isinstance(tv, ttk.Treeview):
             for item in tv.get_children():
                 tv.delete(item)
-
-    def confirm_delete(self, n: int) -> bool:
-        return messagebox.askyesno("Delete", f"Delete {n} item(s)?", parent=self.winfo_toplevel())

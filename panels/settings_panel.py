@@ -1,18 +1,28 @@
-# path: panels/settings_panel.py
+﻿# path: panels/settings_panel.py
 from __future__ import annotations
 
+import os
+import sqlite3
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
-import csv
+from tkinter import ttk, messagebox, filedialog, simpledialog, colorchooser
+import csv, json
 from typing import List, Dict, Any, Optional, Tuple
 
 from panels.base_panel import BasePanel
+from services.themes import (
+    list_theme_names,
+    get_theme as load_theme_spec,
+    save_theme as persist_theme,
+    delete_theme as remove_theme,
+    set_active_theme,
+    get_active_theme_name,
+    make_theme_instance,
+)
 
 # ---- small helpers ----
 def _ci_map(header_row: List[str]) -> Dict[str, int]:
     """case-insensitive header -> index"""
     return {(h or "").strip().lower(): i for i, h in enumerate(header_row)}
-
 
 def _read_csv_rows(path: str) -> List[List[str]]:
     rows: List[List[str]] = []
@@ -23,16 +33,13 @@ def _read_csv_rows(path: str) -> List[List[str]]:
         dialect = sniffer.sniff(content[:4096]) if content else csv.excel
         reader = csv.reader(f, dialect)
         for r in reader:
-            if not any(cell.strip() for cell in r):
+            if not any((cell or "").strip() for cell in r):
                 continue
             rows.append(r)
     return rows
 
-
 def _combo_dialog(parent: tk.Widget, title: str, prompt: str, options: List[str], *, allow_new: bool = True, initial: str = "") -> Optional[str]:
-    """Simple modal combobox dialog. Returns chosen string or None.
-    Why: we need a picker that also allows typing a new label.
-    """
+    """Simple modal combobox dialog. Returns chosen string or None."""
     top = tk.Toplevel(parent)
     top.title(title)
     top.transient(parent.winfo_toplevel())
@@ -75,7 +82,29 @@ def _combo_dialog(parent: tk.Widget, title: str, prompt: str, options: List[str]
 
 
 class SettingsPanel(BasePanel):
-    """Settings with Notebook tabs: General, Import/Export, Search URLs, Categories."""
+    """Settings with Notebook tabs: General, Import/Export, Search URLs, Categories, Theme."""
+
+    # --- convenience wrappers (so we don't rely on BasePanel names) ---
+    def info(self, msg: str) -> None:
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        messagebox.showinfo("Settings", msg, parent=self.winfo_toplevel())
+
+    def warn(self, msg: str) -> None:
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        messagebox.showwarning("Settings", msg, parent=self.winfo_toplevel())
+
+    def error(self, msg: str) -> None:
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        messagebox.showerror("Settings", msg, parent=self.winfo_toplevel())
 
     # ------------- UI build -------------
     def build(self) -> None:
@@ -92,23 +121,24 @@ class SettingsPanel(BasePanel):
         t_io = ttk.Frame(nb)
         t_urls = ttk.Frame(nb)
         t_cats = ttk.Frame(nb)
+        t_theme = ttk.Frame(nb)
 
         nb.add(t_general, text="General")
         nb.add(t_io, text="Import / Export")
         nb.add(t_urls, text="Search URLs")
         nb.add(t_cats, text="Categories")
+        nb.add(t_theme, text="Theme")
 
         # ---- General tab ----
         self._build_general(t_general)
-
-        # ---- Import/Export ----
+        # ---- Import/Export (your Pantry/Cookbook/Shopping + UPC layout) ----
         self._build_io(t_io)
-
         # ---- Search URLs ----
         self._build_urls(t_urls)
-
-        # ---- Categories (now with sub-tabs for Category + Subcategory) ----
+        # ---- Categories (Category + Subcategory) ----
         self._build_categories(t_cats)
+        # ---- Theme (granular end-user customizations + JSON import/export) ----
+        self._build_theme(t_theme)
 
     # ------------- General -------------
     def _build_general(self, parent: tk.Widget) -> None:
@@ -119,7 +149,9 @@ class SettingsPanel(BasePanel):
         # show DB path if available
         db_path = ""
         try:
-            db_path = getattr(self.db, "database", "") or ""
+            row = self.db.execute("PRAGMA database_list").fetchone()
+            if row and len(row) >= 3:
+                db_path = row[2] or ""
         except Exception:
             pass
         ttk.Label(box, text=f"Database: {db_path or '(in-memory or unknown)'}").pack(anchor="w")
@@ -127,12 +159,240 @@ class SettingsPanel(BasePanel):
         ttk.Separator(box).pack(fill="x", pady=10)
         ttk.Label(box, text="Theme applied.", style="Muted.TLabel").pack(anchor="w")
 
-    # ------------- Import / Export (placeholder) -------------
+    # ------------- Import / Export -------------
     def _build_io(self, parent: tk.Widget) -> None:
-        wrap = ttk.Frame(parent, padding=10)
-        wrap.pack(fill="both", expand=True)
-        ttk.Label(wrap, text="Import/Export tools live here.").pack(anchor="w")
-        ttk.Label(wrap, text="This build focuses on the new Categories tab.", style="Muted.TLabel").pack(anchor="w")
+        pad = dict(padx=10, pady=6)
+        parent.grid_columnconfigure(1, weight=1)
+
+        # Pantry
+        ttk.Label(parent, text="Pantry", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", **pad)
+        pbtns = ttk.Frame(parent); pbtns.grid(row=0, column=1, sticky="w", **pad)
+        ttk.Button(pbtns, text="Import CSV", command=self._import_pantry_csv).pack(side="left")
+        ttk.Button(pbtns, text="Export CSV", command=self._export_pantry_csv).pack(side="left", padx=(8,0))
+
+        # Cookbook
+        ttk.Label(parent, text="Cookbook", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", **pad)
+        cbtns = ttk.Frame(parent); cbtns.grid(row=1, column=1, sticky="w", **pad)
+        ttk.Button(cbtns, text="Import CSV", command=self._import_recipes_csv).pack(side="left")
+        ttk.Button(cbtns, text="Export CSV", command=self._export_recipes_csv).pack(side="left", padx=(8,0))
+
+        # Shopping
+        ttk.Label(parent, text="Shopping List", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="w", **pad)
+        sbtns = ttk.Frame(parent); sbtns.grid(row=2, column=1, sticky="w", **pad)
+        ttk.Button(sbtns, text="Import CSV", command=self._import_shopping_csv).pack(side="left")
+        ttk.Button(sbtns, text="Export CSV", command=self._export_shopping_csv).pack(side="left", padx=(8,0))
+
+        # UPC Bulk
+        ttk.Label(parent, text="Pantry – Bulk Add by UPC", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky="w", **pad)
+        ubtns = ttk.Frame(parent); ubtns.grid(row=3, column=1, sticky="w", **pad)
+        ttk.Button(ubtns, text="Import UPCs (CSV/TXT)", command=self._import_upcs_file).pack(side="left")
+        ttk.Label(parent, text="CSV: header 'upc' or first column used; TXT: one UPC per line.", style="Muted.TLabel").grid(row=4, column=1, sticky="w", padx=10)
+
+    # ---- IO: generic helpers ----
+    def _table_exists(self, name: str) -> bool:
+        try:
+            r = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+            return bool(r)
+        except Exception:
+            return False
+
+    def _table_columns(self, table: str) -> List[str]:
+        try:
+            rows = self.db.execute(f"PRAGMA table_info({table})").fetchall()
+            return [r[1] for r in rows]
+        except Exception:
+            return []
+
+    def _export_table_to_csv(self, table: str, *, default_name: Optional[str] = None) -> None:
+        if not self._table_exists(table):
+            self.error(f"Table '{table}' not found.")
+            return
+        cols = self._table_columns(table)
+        if not cols:
+            self.error(f"No columns found for table '{table}'.")
+            return
+        path = filedialog.asksaveasfilename(
+            title=f"Export '{table}' to CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            initialfile=(default_name or f"{table}.csv"),
+        )
+        if not path:
+            return
+        try:
+            rows = self.db.execute(f"SELECT {', '.join(cols)} FROM {table}").fetchall()
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(cols)
+                for r in rows:
+                    # row can be Row or tuple; use name-based when possible
+                    if isinstance(r, sqlite3.Row):
+                        w.writerow([r[c] for c in cols])
+                    else:
+                        w.writerow(list(r))
+            self.info(f"Exported {len(rows)} row(s) from '{table}'.")
+        except Exception as e:
+            self.error(f"Failed to export '{table}':\n{e!s}")
+
+    def _import_csv_into_table(self, table: str) -> None:
+        if not self._table_exists(table):
+            self.error(f"Table '{table}' not found.")
+            return
+        path = filedialog.askopenfilename(
+            title=f"Import CSV into '{table}'",
+            filetypes=[("CSV", "*.csv"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            rows = _read_csv_rows(path)
+            if not rows:
+                self.warn("File appears to be empty.")
+                return
+            header = rows[0]
+            csv_cols_ci = _ci_map(header)
+            table_cols = self._table_columns(table)
+            if not table_cols:
+                self.error(f"Could not read columns for table '{table}'.")
+                return
+
+            # choose intersection, keep DB order
+            use_cols = [c for c in table_cols if c.lower() in csv_cols_ci]
+            if not use_cols:
+                self.error("No matching columns between CSV header and table schema.")
+                return
+
+            data = []
+            for r in rows[1:]:
+                vals = []
+                for c in use_cols:
+                    idx = csv_cols_ci[c.lower()]
+                    vals.append(r[idx] if idx < len(r) else None)
+                data.append(tuple(vals))
+
+            with self.db:
+                placeholders = ",".join(["?"] * len(use_cols))
+                sql = f"INSERT INTO {table} ({', '.join(use_cols)}) VALUES ({placeholders})"
+                self.db.executemany(sql, data)
+
+            self.info(f"Imported {len(data)} row(s) into '{table}'.")
+            if table == "search_urls":
+                self._urls_refresh()
+        except Exception as e:
+            self.error(f"Failed to import into '{table}':\n{e!s}")
+
+    # ---- IO: specific button handlers ----
+    def _export_pantry_csv(self) -> None:
+        self._export_table_to_csv("pantry", default_name="pantry.csv")
+
+    def _import_pantry_csv(self) -> None:
+        self._import_csv_into_table("pantry")
+
+    def _export_recipes_csv(self) -> None:
+        t = self._pick_recipes_table()
+        if not t:
+            return
+        self._export_table_to_csv(t, default_name=f"{t}.csv")
+
+    def _import_recipes_csv(self) -> None:
+        t = self._pick_recipes_table()
+        if not t:
+            return
+        self._import_csv_into_table(t)
+
+    def _export_shopping_csv(self) -> None:
+        t = self._pick_shopping_table()
+        if not t:
+            return
+        self._export_table_to_csv(t, default_name=f"{t}.csv")
+
+    def _import_shopping_csv(self) -> None:
+        t = self._pick_shopping_table()
+        if not t:
+            return
+        self._import_csv_into_table(t)
+
+    def _pick_recipes_table(self) -> Optional[str]:
+        for cand in ("recipes", "cookbook", "recipe"):
+            if self._table_exists(cand):
+                return cand
+        self.error("No recipes/cookbook table found (tried: recipes, cookbook, recipe).")
+        return None
+
+    def _pick_shopping_table(self) -> Optional[str]:
+        for cand in ("shopping_list", "shopping", "groceries"):
+            if self._table_exists(cand):
+                return cand
+        self.error("No shopping list table found (tried: shopping_list, shopping, groceries).")
+        return None
+
+    def _import_upcs_file(self) -> None:
+        if not self._table_exists("pantry"):
+            self.error("Table 'pantry' not found.")
+            return
+        cols = self._table_columns("pantry")
+        if "upc" not in [c.lower() for c in cols]:
+            self.error("The 'pantry' table has no 'upc' column.")
+            return
+
+        path = filedialog.askopenfilename(
+            title="Import UPCs (CSV/TXT)",
+            filetypes=[("CSV/TXT", "*.csv;*.txt"), ("CSV", "*.csv"), ("Text", "*.txt"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+
+        # read UPCs
+        upcs: List[str] = []
+        try:
+            if path.lower().endswith(".txt"):
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        s = (line or "").strip()
+                        if s:
+                            upcs.append(s)
+            else:
+                rows = _read_csv_rows(path)
+                if not rows:
+                    self.warn("File appears to be empty.")
+                    return
+                hdr = _ci_map(rows[0])
+                if "upc" in hdr:
+                    for r in rows[1:]:
+                        if hdr["upc"] < len(r):
+                            s = (r[hdr["upc"]] or "").strip()
+                            if s:
+                                upcs.append(s)
+                else:
+                    # first column fallback
+                    for r in rows[1:]:
+                        if r and (r[0] or "").strip():
+                            upcs.append(r[0].strip())
+        except Exception as e:
+            self.error(f"Failed to read UPC file:\n{e!s}")
+            return
+
+        # insert UPCs if not present
+        inserted = 0
+        skipped = 0
+        try:
+            with self.db:
+                for u in upcs:
+                    # avoid duplicates even if no UNIQUE constraint
+                    row = self.db.execute("SELECT id FROM pantry WHERE upc = ?", (u,)).fetchone()
+                    if row:
+                        skipped += 1
+                        continue
+                    try:
+                        self.db.execute("INSERT INTO pantry(upc) VALUES (?)", (u,))
+                        inserted += 1
+                    except Exception:
+                        skipped += 1
+        except Exception as e:
+            self.error(f"Failed to import UPCs:\n{e!s}")
+            return
+
+        self.info(f"UPCs processed → inserted: {inserted}, skipped: {skipped}")
 
     # ------------- Search URLs -------------
     def _ensure_search_urls_table(self) -> None:
@@ -253,7 +513,7 @@ class SettingsPanel(BasePanel):
             if path.lower().endswith(".txt"):
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
-                        s = line.strip()
+                        s = (line or "").strip()
                         if s:
                             self.db.execute("INSERT OR IGNORE INTO search_urls(url, enabled) VALUES(?,1)", (s,))
                             added += 1
@@ -264,7 +524,6 @@ class SettingsPanel(BasePanel):
                     return
                 hdr = _ci_map(rows[0])
                 data = rows[1:]
-                # accept columns: url, label, enabled
                 for r in data:
                     url = r[hdr["url"]].strip() if "url" in hdr and hdr["url"] < len(r) else (r[0].strip() if r else "")
                     if not url:
@@ -303,7 +562,6 @@ class SettingsPanel(BasePanel):
 
     # ------------- Categories (Pantry + Shopping) -------------
     def _build_categories(self, parent: tk.Widget) -> None:
-        # Notebook: Categories & Subcategories
         nb = ttk.Notebook(parent)
         nb.pack(fill="both", expand=True)
 
@@ -312,11 +570,9 @@ class SettingsPanel(BasePanel):
         nb.add(cat_tab, text="Categories")
         nb.add(sub_tab, text="Subcategories (Pantry)")
 
-        # Build individual tabs
         self._build_categories_tab(cat_tab)
         self._build_subcategories_tab(sub_tab)
 
-    # ----- Category tab -----
     def _build_categories_tab(self, parent: tk.Widget) -> None:
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(1, weight=1)
@@ -360,31 +616,22 @@ class SettingsPanel(BasePanel):
         return str(vals[0]) if vals else None
 
     def _cats_collect_counts(self) -> Dict[str, Tuple[int, int]]:
-        """Return {category_label: (pantry_n, shopping_n)} using canonical labels and mapping blanks to (Uncategorized)."""
-        from utils.categorize import canonical_category  # lazy import to avoid cycles
-
+        from utils.categorize import canonical_category  # lazy import
         counts: Dict[str, Tuple[int, int]] = {}
 
-        # Pantry
         for r in self.db.execute("SELECT category FROM pantry").fetchall():
             raw = (r["category"] or "").strip()
-            label = canonical_category(raw)
-            if not label:
-                label = "(Uncategorized)"
+            label = canonical_category(raw) or "(Uncategorized)"
             p, s = counts.get(label, (0, 0))
             counts[label] = (p + 1, s)
 
-        # Shopping
         try:
             for r in self.db.execute("SELECT category FROM shopping_list").fetchall():
                 raw = (r["category"] or "").strip()
-                label = canonical_category(raw)
-                if not label:
-                    label = "(Uncategorized)"
+                label = canonical_category(raw) or "(Uncategorized)"
                 p, s = counts.get(label, (0, 0))
                 counts[label] = (p, s + 1)
         except Exception:
-            # shopping_list table might not exist in some deployments
             pass
 
         return counts
@@ -405,17 +652,12 @@ class SettingsPanel(BasePanel):
         self.set_status(f"{len(counts)} categories • {total_rows} rows across Pantry + Shopping")
 
     def _cats_reassign(self) -> None:
-        """Move everything from the selected category to a picked/typed target category across Pantry+Shopping.
-        Why: faster than rename when target already exists.
-        """
-        from utils.categorize import canonical_category  # lazy import
-
+        from utils.categorize import canonical_category
         old_label = self._cats_selected()
         if not old_label:
             messagebox.showinfo("Categories", "Select a category to reassign.", parent=self.winfo_toplevel())
             return
 
-        # Gather choices excluding the selected label, but allow new typing.
         choices = [c for c in self._cats_collect_counts().keys() if c != old_label and c != "(Uncategorized)"]
         target = _combo_dialog(self, "Bulk Reassign", f"Move all items from '{old_label}' to:", choices, allow_new=True)
         if target is None:
@@ -424,7 +666,6 @@ class SettingsPanel(BasePanel):
         if not target:
             return
         if target == "(Uncategorized)":
-            # Treat as delete → NULL
             return self._cats_delete()
 
         def match_row(cat_val: Optional[str]) -> bool:
@@ -434,9 +675,7 @@ class SettingsPanel(BasePanel):
             return canonical_category(s) == old_label
 
         cur = self.db.cursor()
-        # Pantry
         p_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM pantry").fetchall() if match_row(r["category"])]
-        # Shopping
         try:
             s_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM shopping_list").fetchall() if match_row(r["category"])]
         except Exception:
@@ -456,8 +695,7 @@ class SettingsPanel(BasePanel):
         self.info(f"Reassigned → {changed} row(s) updated.")
 
     def _cats_rename(self) -> None:
-        from utils.categorize import canonical_category  # lazy import
-
+        from utils.categorize import canonical_category
         old_label = self._cats_selected()
         if not old_label:
             messagebox.showinfo("Categories", "Select a category to rename/merge.", parent=self.winfo_toplevel())
@@ -480,9 +718,7 @@ class SettingsPanel(BasePanel):
             return canonical_category(s) == old_label
 
         cur = self.db.cursor()
-        # Pantry
         p_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM pantry").fetchall() if match_row(r["category"])]
-        # Shopping
         try:
             s_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM shopping_list").fetchall() if match_row(r["category"])]
         except Exception:
@@ -502,8 +738,7 @@ class SettingsPanel(BasePanel):
         self.info(f"Renamed/Merged → {changed} row(s) updated.")
 
     def _cats_delete(self) -> None:
-        from utils.categorize import canonical_category  # lazy import
-
+        from utils.categorize import canonical_category
         old_label = self._cats_selected()
         if not old_label:
             return
@@ -517,9 +752,7 @@ class SettingsPanel(BasePanel):
             return canonical_category(s) == old_label
 
         cur = self.db.cursor()
-        # Pantry
         p_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM pantry").fetchall() if match_row(r["category"])]
-        # Shopping
         try:
             s_ids = [int(r["id"]) for r in cur.execute("SELECT id, category FROM shopping_list").fetchall() if match_row(r["category"])]
         except Exception:
@@ -539,13 +772,9 @@ class SettingsPanel(BasePanel):
         self.info(f"Deleted category label → {changed} row(s) set to (Uncategorized).")
 
     def _cats_clean_all(self) -> None:
-        """Canonicalize category/subcategory across Pantry; canonicalize category across Shopping."""
-        from utils.categorize import canonical_category, canonical_subcategory  # lazy import
-
+        from utils.categorize import canonical_category, canonical_subcategory
         cur = self.db.cursor()
         changed = 0
-
-        # Pantry: category + subcategory
         try:
             prows = cur.execute("SELECT id, category, subcategory FROM pantry").fetchall()
             for r in prows:
@@ -559,8 +788,6 @@ class SettingsPanel(BasePanel):
                     changed += 1
         except Exception:
             pass
-
-        # Shopping: category only
         try:
             srows = cur.execute("SELECT id, category FROM shopping_list").fetchall()
             for r in srows:
@@ -572,12 +799,11 @@ class SettingsPanel(BasePanel):
                     changed += 1
         except Exception:
             pass
-
         self.db.commit()
         self._cats_refresh()
         self.info(f"Cleaned categories on {changed} row(s).")
 
-    # ----- Subcategory tab (Pantry only) -----
+    # ----- Subcategory tab -----
     def _build_subcategories_tab(self, parent: tk.Widget) -> None:
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(1, weight=1)
@@ -617,14 +843,12 @@ class SettingsPanel(BasePanel):
         return str(vals[0]) if vals else None
 
     def _subcats_collect_counts(self) -> Dict[str, int]:
-        from utils.categorize import canonical_subcategory  # lazy import
+        from utils.categorize import canonical_subcategory
         counts: Dict[str, int] = {}
         try:
             for r in self.db.execute("SELECT subcategory FROM pantry").fetchall():
                 raw = (r["subcategory"] or "").strip()
-                label = canonical_subcategory(raw)
-                if not label:
-                    label = "(Uncategorized)"
+                label = canonical_subcategory(raw) or "(Uncategorized)"
                 counts[label] = counts.get(label, 0) + 1
         except Exception:
             pass
@@ -645,8 +869,7 @@ class SettingsPanel(BasePanel):
         self.set_status(f"{len(counts)} subcategories • {total} pantry rows")
 
     def _subcats_reassign(self) -> None:
-        from utils.categorize import canonical_subcategory  # lazy import
-
+        from utils.categorize import canonical_subcategory
         old_label = self._subcats_selected()
         if not old_label:
             messagebox.showinfo("Subcategories", "Select a subcategory to reassign.", parent=self.winfo_toplevel())
@@ -660,7 +883,6 @@ class SettingsPanel(BasePanel):
         if not target:
             return
         if target == "(Uncategorized)":
-            # set to NULL
             return self._subcats_delete()
 
         def match_row(sub_val: Optional[str]) -> bool:
@@ -681,8 +903,7 @@ class SettingsPanel(BasePanel):
         self.info(f"Reassigned subcategory → {changed} row(s) updated.")
 
     def _subcats_rename(self) -> None:
-        from utils.categorize import canonical_subcategory  # lazy import
-
+        from utils.categorize import canonical_subcategory
         old_label = self._subcats_selected()
         if not old_label:
             messagebox.showinfo("Subcategories", "Select a subcategory to rename/merge.", parent=self.winfo_toplevel())
@@ -716,8 +937,7 @@ class SettingsPanel(BasePanel):
         self.info(f"Renamed/Merged subcategory → {changed} row(s) updated.")
 
     def _subcats_delete(self) -> None:
-        from utils.categorize import canonical_subcategory  # lazy import
-
+        from utils.categorize import canonical_subcategory
         old_label = self._subcats_selected()
         if not old_label:
             return
@@ -742,8 +962,7 @@ class SettingsPanel(BasePanel):
         self.info(f"Deleted subcategory label → {changed} row(s) set to (Uncategorized).")
 
     def _subcats_clean(self) -> None:
-        from utils.categorize import canonical_subcategory  # lazy import
-
+        from utils.categorize import canonical_subcategory
         cur = self.db.cursor()
         changed = 0
         try:
@@ -760,3 +979,305 @@ class SettingsPanel(BasePanel):
         self.db.commit()
         self._subcats_refresh()
         self.info(f"Cleaned subcategories on {changed} row(s).")
+
+    # ------------- Theme (granular end-user customizations) -------------
+    def _build_theme(self, parent: tk.Widget) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(2, weight=1)
+
+        # --- Toolbar: theme picker & actions ---
+        bar = ttk.Frame(parent, padding=(8, 6))
+        bar.grid(row=0, column=0, sticky="ew")
+
+        ttk.Label(bar, text="Theme:").pack(side="left")
+        self._theme_var = tk.StringVar(value=get_active_theme_name())
+        self._theme_combo = ttk.Combobox(
+            bar,
+            textvariable=self._theme_var,
+            values=sorted(list_theme_names(), key=str.lower),
+            state="readonly",
+            width=28,
+        )
+        self._theme_combo.pack(side="left", padx=(6, 6))
+        self._theme_combo.bind("<<ComboboxSelected>>",
+                       lambda e: self._load_theme_into_editor(self._theme_var.get()))
+
+        def on_activate():
+            name = self._theme_var.get().strip()
+            if not name:
+                return
+            set_active_theme(name)
+            try:
+                self.app.theme = make_theme_instance(name)
+                self.app.theme.apply(self.app)
+            except Exception:
+                pass
+            self.set_status(f"Activated theme: {name}")
+            self._load_theme_into_editor(name)
+
+        ttk.Button(bar, text="Activate", command=on_activate).pack(side="left")
+
+        def on_duplicate():
+            name = self._theme_var.get() or get_active_theme_name()
+            spec = load_theme_spec(name)
+            base = dict(spec)
+            base["name"] = f"{spec.get('name', name)} (Copy)"
+            persist_theme(base)
+            self._refresh_theme_names(select=base["name"])
+            self._load_theme_into_editor(base["name"])
+            self.set_status(f"Duplicated theme → {base['name']}")
+
+        ttk.Button(bar, text="Duplicate…", command=on_duplicate).pack(side="left", padx=(8, 0))
+
+        def on_save():
+            spec = self._collect_editor_spec()
+            persist_theme(spec)
+            self._refresh_theme_names(select=spec["name"])
+            # If we saved the active theme, re-apply immediately
+            if spec["name"] == get_active_theme_name():
+                self.app.theme = make_theme_instance(spec["name"])
+                self.app.theme.apply(self.app)
+            self.set_status(f"Saved theme: {spec['name']}")
+
+        ttk.Button(bar, text="Save", command=on_save).pack(side="left", padx=(6, 0))
+
+        def on_delete():
+            name = self._theme_var.get().strip()
+            if not name:
+                return
+            if not self.confirm_delete(1):
+                return
+            remove_theme(name)
+            self._refresh_theme_names()
+            self._theme_var.set(get_active_theme_name())
+            self._load_theme_into_editor(self._theme_var.get())
+            self.set_status(f"Deleted theme: {name}")
+
+        ttk.Button(bar, text="Delete", command=on_delete).pack(side="left", padx=(6, 0))
+
+        # Import/Export themes
+        ttk.Button(bar, text="Import Theme…", command=self._theme_import).pack(side="left", padx=(12, 0))
+        ttk.Button(bar, text="Export Theme…", command=self._theme_export).pack(side="left", padx=(6, 0))
+
+        # --- Editor form (two columns) ---
+        wrap = ttk.Frame(parent, padding=(10, 8))
+        wrap.grid(row=1, column=0, sticky="ew")
+        wrap.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(wrap, text="Theme Name").grid(row=0, column=0, sticky="w")
+        self._name_var = tk.StringVar()
+        ttk.Entry(wrap, textvariable=self._name_var, width=32).grid(row=0, column=1, sticky="w", padx=(6, 18))
+
+        # colors
+        ttk.Label(wrap, text="Colors", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", pady=(8, 4))
+        colors_frame = ttk.Frame(wrap)
+        colors_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self._color_vars: Dict[str, tk.StringVar] = {}
+        color_keys = [
+            "bg", "surface", "text", "muted_text", "border",
+            "accent", "accent_fg", "warning", "danger",
+            "zebra_even", "zebra_odd", "low_bg", "low_fg",
+        ]
+
+        def make_color_row(r: int, key: str, label: str):
+            ttk.Label(colors_frame, text=label).grid(row=r, column=0, sticky="w")
+            v = tk.StringVar()
+            self._color_vars[key] = v
+            e = ttk.Entry(colors_frame, textvariable=v, width=16)
+            e.grid(row=r, column=1, sticky="w", padx=(6, 6))
+            def pick():
+                initial = v.get() or "#FFFFFF"
+                color = colorchooser.askcolor(initialcolor=initial, parent=self.winfo_toplevel())[1]
+                if color:
+                    v.set(color); self._apply_preview(
+             )
+            ttk.Button(colors_frame, text="Pick…", command=pick).grid(row=r, column=2, sticky="w")
+
+        for i, k in enumerate(color_keys):
+            make_color_row(i, k, k.replace("_", " ").title())
+
+        # fonts
+        ttk.Label(wrap, text="Fonts", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky="w", pady=(10, 4))
+        self._font_base_family = tk.StringVar()
+        self._font_base_size = tk.IntVar()
+        self._font_mono_family = tk.StringVar()
+
+        ttk.Label(wrap, text="Base Family").grid(row=4, column=0, sticky="w")
+        ttk.Entry(wrap, textvariable=self._font_base_family, width=22).grid(row=4, column=1, sticky="w", padx=(6, 18))
+
+        ttk.Label(wrap, text="Base Size").grid(row=5, column=0, sticky="w")
+        ttk.Spinbox(wrap, from_=8, to=20, textvariable=self._font_base_size, width=6,
+                    command=lambda: self._apply_preview()).grid(row=5, column=1, sticky="w", padx=(6, 18))
+
+        ttk.Label(wrap, text="Mono Family").grid(row=6, column=0, sticky="w")
+        ttk.Entry(wrap, textvariable=self._font_mono_family, width=22).grid(row=6, column=1, sticky="w", padx=(6, 18))
+
+        # spacing
+        ttk.Label(wrap, text="Spacing", font=("Segoe UI", 10, "bold")).grid(row=7, column=0, sticky="w", pady=(10, 4))
+        self._sp_xs = tk.IntVar(); self._sp_sm = tk.IntVar(); self._sp_md = tk.IntVar(); self._sp_lg = tk.IntVar()
+
+        def slider(row: int, label: str, var: tk.IntVar):
+            ttk.Label(wrap, text=label).grid(row=row, column=0, sticky="w")
+            s = ttk.Scale(wrap, from_=0, to=24, orient="horizontal",
+                          command=lambda _v=None: self._apply_preview(), variable=var)
+            s.grid(row=row, column=1, sticky="ew", padx=(6, 18))
+        slider(8,  "xs", self._sp_xs)
+        slider(9,  "sm", self._sp_sm)
+        slider(10, "md", self._sp_md)
+        slider(11, "lg", self._sp_lg)
+
+        # tree settings
+        ttk.Label(wrap, text="Tree", font=("Segoe UI", 10, "bold")).grid(row=12, column=0, sticky="w", pady=(10, 4))
+        self._tree_row_h = tk.IntVar()
+        ttk.Label(wrap, text="Row Height").grid(row=13, column=0, sticky="w")
+        ttk.Spinbox(wrap, from_=16, to=40, textvariable=self._tree_row_h, width=6,
+                    command=lambda: self._apply_preview()).grid(row=13, column=1, sticky="w", padx=(6, 18))
+
+        # live changes on field edits
+        for v in list(self._color_vars.values()) + [self._font_base_family, self._font_mono_family]:
+            v.trace_add("write", lambda *_: self._apply_preview())
+
+        # --- Preview area ---
+        preview = ttk.Frame(parent, padding=(8, 6), style="Card.TFrame")
+        preview.grid(row=2, column=0, sticky="nsew")
+        ttk.Label(preview, text="Preview area").grid(row=0, column=0, sticky="w")
+        tv = ttk.Treeview(preview, columns=("a", "b"), show="headings", height=4)
+        tv.heading("a", text="Column A"); tv.heading("b", text="Column B")
+        tv.insert("", "end", values=("Foo", "Bar"))
+        tv.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        preview.grid_rowconfigure(1, weight=1)
+        preview.grid_columnconfigure(0, weight=1)
+        self._theme_preview_tree = tv
+
+        # boot with active
+        self._load_theme_into_editor(get_active_theme_name())
+
+    def _refresh_theme_names(self, *, select: str | None = None) -> None:
+        names = sorted(list_theme_names(), key=str.lower)
+        self._theme_combo.configure(values=names)
+        if select and select in names:
+            self._theme_var.set(select)
+
+    def _load_theme_into_editor(self, name: str) -> None:
+        spec = load_theme_spec(name)
+        self._name_var.set(spec.get("name", name))
+
+        colors = spec.get("colors", {}) or {}
+        for k, var in self._color_vars.items():
+            var.set(colors.get(k, ""))
+
+        fonts = spec.get("fonts", {}) or {}
+        self._font_base_family.set(fonts.get("base_family", "Segoe UI"))
+        self._font_base_size.set(int(fonts.get("base_size", 10)))
+        self._font_mono_family.set(fonts.get("mono_family", "Consolas"))
+
+        sp = spec.get("spacing", {}) or {}
+        self._sp_xs.set(int(sp.get("xs", 2)))
+        self._sp_sm.set(int(sp.get("sm", 4)))
+        self._sp_md.set(int(sp.get("md", 8)))
+        self._sp_lg.set(int(sp.get("lg", 12)))
+
+        tree = spec.get("tree", {}) or {}
+        self._tree_row_h.set(int(tree.get("row_height", 22)))
+
+        self._apply_preview()
+
+    def _collect_editor_spec(self) -> Dict[str, Any]:
+        name = (self._name_var.get() or "").strip() or "Custom Theme"
+        colors = {k: v.get().strip() for k, v in self._color_vars.items() if v.get().strip()}
+        spec = {
+            "name": name,
+            "colors": colors,
+            "fonts": {
+                "base_family": self._font_base_family.get().strip() or "Segoe UI",
+                "base_size": int(self._font_base_size.get() or 10),
+                "mono_family": self._font_mono_family.get().strip() or "Consolas",
+            },
+            "spacing": {
+                "xs": int(self._sp_xs.get() or 2),
+                "sm": int(self._sp_sm.get() or 4),
+                "md": int(self._sp_md.get() or 8),
+                "lg": int(self._sp_lg.get() or 12),
+            },
+            "tree": {"row_height": int(self._tree_row_h.get() or 22)},
+        }
+        return spec
+
+    def _apply_preview(self) -> None:
+        try:
+            active_name = get_active_theme_name()
+            base = load_theme_spec(active_name)
+            merged = dict(base)
+            for k in ("colors", "fonts", "spacing", "tree"):
+                merged.setdefault(k, {})
+                merged[k].update(self._collect_editor_spec().get(k, {}) or {})
+
+            th = getattr(self.app, "theme", None) or make_theme_instance(active_name)
+            th.spec = merged                  # reuse instance → fewer flickers
+            self.app.theme = th
+            th.apply(self.app)
+            self.set_status("Preview applied (not saved)")
+        except Exception:
+            pass
+
+    # Theme import/export
+    def _theme_import(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Import Theme(s) from JSON",
+            filetypes=[("JSON", "*.json"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            imported_names: List[str] = []
+
+            def _normalize_and_save(name: str, spec: Dict[str, Any]) -> None:
+                payload = {
+                    "name": name.strip() or "Imported Theme",
+                    "colors": dict(spec.get("colors", {})),
+                    "fonts": dict(spec.get("fonts", {})),
+                    "spacing": dict(spec.get("spacing", {})),
+                    "tree": dict(spec.get("tree", {})),
+                }
+                persist_theme(payload)
+                imported_names.append(payload["name"])
+
+            if isinstance(data, dict) and ("colors" in data or "fonts" in data or "spacing" in data or "tree" in data):
+                _normalize_and_save(data.get("name") or "Imported Theme", data)
+            elif isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        _normalize_and_save(str(k), v)
+            elif isinstance(data, list):
+                for idx, v in enumerate(data, 1):
+                    if isinstance(v, dict):
+                        _normalize_and_save(v.get("name") or f"Imported {idx}", v)
+            else:
+                raise ValueError("Unsupported JSON structure for themes.")
+
+            self._refresh_theme_names(select=imported_names[-1] if imported_names else None)
+            if imported_names:
+                self._load_theme_into_editor(imported_names[-1])
+            self.info(f"Imported {len(imported_names)} theme(s).")
+        except Exception as e:
+            self.error(f"Failed to import theme(s):\n{e!s}")
+
+    def _theme_export(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Export Theme to JSON",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+            initialfile=f"{(self._name_var.get() or self._theme_var.get() or 'theme').strip()}.json",
+        )
+        if not path:
+            return
+        try:
+            spec = self._collect_editor_spec()
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(spec, f, ensure_ascii=False, indent=2)
+            self.info(f"Exported theme → {path}")
+        except Exception as e:
+            self.error(f"Failed to export theme:\n{e!s}")

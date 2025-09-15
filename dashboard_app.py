@@ -4,8 +4,8 @@ from __future__ import annotations
 import sys
 import logging
 from typing import Any, Optional, Protocol
-
 from app import App
+from services.themes import make_theme_instance, get_active_theme_name  # theme façade
 from panels import CookbookPanel, MenuPanel
 
 
@@ -29,18 +29,28 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
     app: Optional[App] = None
     try:
+        # 1) Construct the app/root first
         app = App()
-        # In your main app class (e.g., DashboardApp or App)
+
+        # 2) Initialize & apply the active theme
+        app.theme = make_theme_instance(get_active_theme_name())
+        app.theme.apply(app) # ensures styles before panels mount
+
+        # 3) Build panels
         app.cookbook_panel = CookbookPanel(master=app, app=app)
         app.menu_panel = MenuPanel(master=app, app=app)
-        
+
+        # 4) Go!
         app.mainloop()
         return 0
+
     except KeyboardInterrupt:
         # graceful interrupt during startup or loop
         return 130  # standard for SIGINT
+
     finally:
         if app is not None:
             # Close DB first so widgets using it don't try to access after destroy.

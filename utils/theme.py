@@ -1,104 +1,213 @@
-# path: utils/theme.py
+﻿# path: utils/theme.py
 from __future__ import annotations
+
 import json
 import os
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import tkinter as tk
 from tkinter import ttk
 
-# sensible defaults
-_DEFAULT = {
-    "bg": "#F7F9FC",
-    "surface": "#FFFFFF",
-    "surface2": "#F0F2F5",
-    "text": "#2E3440",
-    "muted": "#6B7280",
-    "accent": "#4F9DDE",
-    "accent2": "#7BCFA9",
-    "border": "#D1D5DB",
-    "danger": "#E63946",
-    "warning": "#F4A261",
+# --------------------------------------------------------------------------------------
+# Storage
+# --------------------------------------------------------------------------------------
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+_THEME_PATH = os.path.join(_PROJECT_ROOT, "themes.json")
+
+_DEFAULT_STORE = {
+    "active": "Classic Light",
+    "themes": {
+        "Classic Light": {
+            "name": "Classic Light",
+            "colors": {
+                "bg": "#FFFFFF",
+                "surface": "#F7F7F9",
+                "text": "#1F2937",
+                "muted_text": "#6B7280",
+                "border": "#E5E7EB",
+                "accent": "#2563EB",
+                "accent_fg": "#FFFFFF",
+                "warning": "#F59E0B",
+                "danger": "#DC2626",
+                "zebra_even": "#FFFFFF",
+                "zebra_odd": "#F6F7FB",
+                "low_bg": "#FFE5E5",
+                "low_fg": "#7F1D1D",
+            },
+            "fonts": {
+                "base_family": "Segoe UI",
+                "base_size": 10,
+                "mono_family": "Consolas",
+            },
+            "spacing": {"xs": 2, "sm": 4, "md": 8, "lg": 12},
+            "tree": {"row_height": 22},
+        },
+        "Classic Dark": {
+            "name": "Classic Dark",
+            "colors": {
+                "bg": "#0F172A",
+                "surface": "#111827",
+                "text": "#E5E7EB",
+                "muted_text": "#9CA3AF",
+                "border": "#374151",
+                "accent": "#60A5FA",
+                "accent_fg": "#0B1020",
+                "warning": "#FBBF24",
+                "danger": "#F87171",
+                "zebra_even": "#111827",
+                "zebra_odd": "#0B1324",
+                "low_bg": "#3B0D0D",
+                "low_fg": "#FCA5A5",
+            },
+            "fonts": {
+                "base_family": "Segoe UI",
+                "base_size": 10,
+                "mono_family": "Consolas",
+            },
+            "spacing": {"xs": 2, "sm": 4, "md": 8, "lg": 12},
+            "tree": {"row_height": 22},
+        },
+    },
 }
 
+def _load_store() -> Dict[str, Any]:
+    if not os.path.exists(_THEME_PATH):
+        return json.loads(json.dumps(_DEFAULT_STORE))
+    try:
+        with open(_THEME_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or "themes" not in data:
+            raise ValueError("bad themes.json")
+        data.setdefault("active", next(iter(data["themes"])) if data["themes"] else "Classic Light")
+        return data
+    except Exception:
+        return json.loads(json.dumps(_DEFAULT_STORE))
+
+def _save_store(store: Dict[str, Any]) -> None:
+    with open(_THEME_PATH, "w", encoding="utf-8") as f:
+        json.dump(store, f, ensure_ascii=False, indent=2)
+
+# ---- Public storage helpers ----------------------------------------------------------
+
+def list_themes() -> Dict[str, Dict[str, Any]]:
+    return _load_store().get("themes", {})
+
+def get_active_theme_name() -> str:
+    return _load_store().get("active", "Classic Light")
+
+def set_active_theme(name: str) -> None:
+    store = _load_store()
+    if name in store.get("themes", {}):
+        store["active"] = name
+        _save_store(store)
+
+def save_theme(theme: Dict[str, Any]) -> None:
+    """Insert or overwrite by theme['name'].""" 
+    name = (theme.get("name") or "").strip() or "Custom Theme"
+    theme = dict(theme, name=name)
+    store = _load_store()
+    store.setdefault("themes", {})[name] = theme
+    _save_store(store)
+
+def delete_theme(name: str) -> None:
+    store = _load_store()
+    if name in store.get("themes", {}):
+        del store["themes"][name]
+        if store.get("active") == name:
+            store["active"] = next(iter(store["themes"])) if store["themes"] else "Classic Light"
+        _save_store(store)
+
+def get_theme(name: Optional[str] = None) -> Dict[str, Any]:
+    store = _load_store()
+    if name is None:
+        name = store.get("active") or "Classic Light"
+    return store.get("themes", {}).get(name, _DEFAULT_STORE["themes"]["Classic Light"])
+
+# --------------------------------------------------------------------------------------
+# Runtime application
+# --------------------------------------------------------------------------------------
+
+@dataclass
 class Theme:
-    def __init__(self, colors: dict | None = None):
-        self.colors = dict(_DEFAULT)
-        if colors:
-            self.colors.update(colors)
-        self.spacing = {"xs": 2, "sm": 4, "md": 8, "lg": 18}
-        self.fonts = {
-            "heading": ("Segoe UI", 12, "bold"),
-            "title": ("Segoe UI", 11, "bold"),
-            "base": ("Segoe UI", 10),
-            "mono": ("Consolas", 10),
+    spec: Dict[str, Any]
+
+    @property
+    def spacing(self) -> Dict[str, int]:
+        sp = (self.spec.get("spacing") or {})
+        return {
+            "xs": int(sp.get("xs", 2)),
+            "sm": int(sp.get("sm", 4)),
+            "md": int(sp.get("md", 8)),
+            "lg": int(sp.get("lg", 12)),
         }
 
-    def apply(self, root):
-        c = self.colors
-        style = ttk.Style(root)
+    def table_tag_colors(self) -> Dict[str, Dict[str, str]]:
+        c = (self.spec.get("colors") or {})
+        return {
+            "low": {"background": c.get("low_bg", "#FFE5E5"), "foreground": c.get("low_fg", "#7F1D1D")},
+            "ok": {},
+            "zebra": {"background": c.get("zebra_odd", "#F6F7FB")},
+        }
+
+    def apply(self, widget: tk.Misc | None) -> None:
+        """Apply ttk styles globally (clam theme) and adjust key components."""
+        style = ttk.Style()
         try:
             style.theme_use("clam")
         except Exception:
             pass
 
-        root.configure(bg=c.get("bg", "#FFFFFF"))
-        style.configure(
-            ".",
-            background=c.get("surface", "#FFFFFF"),
-            foreground=c.get("text", "#111111"),
-            fieldbackground=c.get("surface2", "#F0F2F5"),
-        )
-        style.configure("TFrame", background=c.get("surface", "#FFFFFF"))
-        style.configure(
-            "Card.TFrame",
-            background=c.get("surface2", "#F0F2F5"),
-            borderwidth=1,
-            relief="solid",
-        )
-        style.configure("TLabel", background=c.get("surface", "#FFFFFF"), foreground=c.get("text", "#111111"))
-        style.configure("Muted.TLabel", background=c.get("surface", "#FFFFFF"), foreground=c.get("muted", "#6B7280"))
-        style.configure("TButton", padding=(8, 4), background=c.get("surface2", "#F0F2F5"))
+        c = (self.spec.get("colors") or {})
+        f = (self.spec.get("fonts") or {})
+        tree = (self.spec.get("tree") or {})
+
+        bg = c.get("bg", "#FFFFFF")
+        surface = c.get("surface", "#F7F7F9")
+        text = c.get("text", "#111827")
+        muted = c.get("muted_text", "#6B7280")
+        border = c.get("border", "#E5E7EB")
+        accent = c.get("accent", "#2563EB")
+        accent_fg = c.get("accent_fg", "#FFFFFF")
+
+        base_family = f.get("base_family", "Segoe UI")
+        base_size = int(f.get("base_size", 10))
+
+        # Global ttk defaults
+        style.configure(".", background=bg, foreground=text, font=(base_family, base_size))
+        style.configure("TFrame", background=bg)
+        style.configure("Card.TFrame", background=surface, bordercolor=border, relief="flat")
+        style.configure("TLabel", background=bg, foreground=text)
+        style.configure("Muted.TLabel", background=bg, foreground=muted)
+        style.configure("TButton", padding=6, background=surface, foreground=text, bordercolor=border, focusthickness=2)
+        style.map("TButton", background=[("active", accent)], foreground=[("active", accent_fg)])
+
+        # Treeview polish
         style.configure(
             "Treeview",
-            background=c.get("surface2", "#F0F2F5"),
-            fieldbackground=c.get("surface2", "#F0F2F5"),
-            foreground=c.get("text", "#111111"),
-            bordercolor=c.get("border", "#D1D5DB"),
+            background=surface,
+            fieldbackground=surface,
+            foreground=text,
+            bordercolor=border,
+            rowheight=int(tree.get("row_height", 22)),
         )
-        style.configure("Treeview.Heading", background=c.get("surface", "#FFFFFF"), foreground=c.get("text", "#111111"))
+        style.configure("Treeview.Heading", background=surface, foreground=muted, bordercolor=border)
 
-def load_theme_from_file(path: str | None = None) -> dict:
-    """
-    Load a colors dict from JSON. Tries, in order:
-      1) explicit 'path' if provided
-      2) 'data/themes.json'
-      3) './themes.json'
-    Accepts either:
-      - a flat color dict (bg/surface/text/etc), or
-      - a mapping of named themes (e.g., {'light': {...}, 'dark': {...}})
-        in which case 'light' or the first mapping is chosen.
-    Returns a dict merged over _DEFAULT.
-    """
-    candidates = [path] if path else [
-        os.path.join("data", "themes.json"),
-        "themes.json",
-    ]
-    for p in candidates:
-        try:
-            if not p or not os.path.exists(p):
-                continue
-            with open(p, "r", encoding="utf-8") as f:
-                obj = json.load(f)
-            # Flat dict that already looks like colors
-            if isinstance(obj, dict) and ("bg" in obj or "surface" in obj or "text" in obj):
-                return {**_DEFAULT, **obj}
-            # Map of named themes (prefer 'light', then 'default', else first)
-            if isinstance(obj, dict):
-                for key in ("light", "default"):
-                    if key in obj and isinstance(obj[key], dict):
-                        return {**_DEFAULT, **obj[key]}
-                for _, v in obj.items():
-                    if isinstance(v, dict):
-                        return {**_DEFAULT, **v}
-        except Exception:
-            # fall through to defaults if anything goes sideways
-            pass
-    return dict(_DEFAULT)
+        # NEW: also theme classic Tk widgets so tk.Frame / tk.Label pick up colors
+        if widget is not None:
+            try:
+                # Option database – affects classic Tk widgets under this root
+                widget.option_add("*Background", bg)
+                widget.option_add("*foreground", text)
+                widget.option_add("*Label.background", bg)
+                widget.option_add("*Label.foreground", text)
+                widget.option_add("*Frame.background", bg)
+                widget.option_add("*Button.background", surface)
+                widget.option_add("*Button.foreground", text)
+                widget.option_add("*Entry.background", surface)
+                widget.option_add("*Entry.foreground", text)
+                widget.option_add("*TCombobox*Listbox*background", surface)
+                widget.option_add("*TCombobox*Listbox*foreground", text)
+            except Exception:
+                pass
