@@ -1,4 +1,4 @@
-# path: panels/menu_panel.py
+﻿# path: panels/menu_panel.py
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -164,17 +164,20 @@ class MenuPanel(BasePanel):
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
         ttk.Label(right, text="Recipes").grid(row=0, column=0, sticky="w")
-        tvr = ttk.Treeview(right, columns=[c[0] for c in REC_COLS], show="headings", selectmode="extended")
+        tuv = ttk.Treeview(right, columns=[c[0] for c in REC_COLS], show="headings", selectmode="extended")
         for k, h, w, a in REC_COLS:
-            tvr.heading(k, text=h)
+            tuv.heading(k, text=h)
             anc = {"w": "w", "c": "center", "e": "e"}.get(a, "w")
-            tvr.column(k, width=w, anchor=anc, stretch=True)
-        tvr.grid(row=1, column=0, sticky="nsew")
-        self._tree_rec = tvr
+            tuv.column(k, width=w, anchor=anc, stretch=True)
+        tuv.grid(row=1, column=0, sticky="nsew")
+        self._tree_rec = tuv
 
-        vsb = ttk.Scrollbar(right, orient="vertical", command=tvr.yview)
-        tvr.configure(yscroll=vsb.set)
+        vsb = ttk.Scrollbar(right, orient="vertical", command=tuv.yview)
+        tuv.configure(yscroll=vsb.set)
         vsb.grid(row=1, column=1, sticky="ns")
+
+        # Add double-click event to recipe treeview
+        tuv.bind("<Double-1>", self._print_recipe_from_selection)
 
         # Menus
         m_menu = tk.Menu(self, tearoff=0)
@@ -391,3 +394,47 @@ class MenuPanel(BasePanel):
             meta={"Source": "Menu", "Rows": len(rows)},
             open_after=True,
         )
+
+    def _find_cookbook_panel(self):
+        """
+        Search for an instance of CookbookPanel in the parent widget hierarchy.
+        Returns the instance if found, else None.
+        """
+        # Try direct app attribute first
+        app = getattr(self, "app", None)
+        if app and hasattr(app, "cookbook_panel"):
+            return app.cookbook_panel
+
+        # Search among children of the app/master for CookbookPanel
+        master = getattr(self, "master", None)
+        for widget in (getattr(app, "children", {}) if app else {}):
+            panel = app.children[widget]
+            if panel.__class__.__name__ == "CookbookPanel":
+                return panel
+        for widget in (getattr(master, "children", {}) if master else {}):
+            panel = master.children[widget]
+            if panel.__class__.__name__ == "CookbookPanel":
+                return panel
+        return None
+
+    def _print_recipe_from_selection(self, event: tk.Event) -> None:
+        """Handles double-click event on recipe treeview to print the selected recipe."""
+        tvr = self._tree_rec
+        if not isinstance(tvr, ttk.Treeview):
+            return
+        sel = tvr.selection()
+        if len(sel) != 1:
+            messagebox.showinfo("Menu", "Select one recipe to print.", parent=self.winfo_toplevel())
+            return
+
+        iid = sel[0]
+        if not iid.startswith("rec::"):
+            return
+
+        rid = int(iid.split("::", 1)[1])
+        # Find the CookbookPanel instance robustly
+        cookbook_panel = self._find_cookbook_panel()
+        if cookbook_panel and hasattr(cookbook_panel, "print_recipe"):
+            cookbook_panel.print_recipe(rid)
+        else:
+            messagebox.showerror("Error", "Cookbook panel not found or does not support printing.", parent=self.winfo_toplevel())

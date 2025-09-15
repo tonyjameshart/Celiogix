@@ -1,6 +1,8 @@
 {
   "ExpandedNodes": [
-    ""
+    "",
+    "\\panels"
   ],
+  "SelectedNode": "\\panels\\shopping_list_panel.py",
   "PreviewInSolutionExplorer": false
 }
