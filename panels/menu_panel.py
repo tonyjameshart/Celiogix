@@ -1,17 +1,18 @@
-﻿# path: panels/menu_panel.py
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Optional, List, Tuple
-import datetime, calendar
+import datetime
+import calendar
 
 from panels.base_panel import BasePanel
 from utils.export import export_table_html, export_recipes_html
+from utils.scroll import ScrollFrame  # horizontal/vertical panel scrolling
 
 # ------------------------- Tiny modal date picker -------------------------
 class _DatePickerDialog(tk.Toplevel):
     """Modal mini-calendar that returns ISO date (YYYY-MM-DD) via .result."""
-    def __init__(self, parent: tk.Misc, initial: Optional[datetime.date] = None, title="Choose Date"):
+    def __init__(self, parent: tk.Misc, initial: Optional[datetime.date] = None, title: str = "Choose Date"):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
@@ -20,15 +21,20 @@ class _DatePickerDialog(tk.Toplevel):
         self.result: Optional[str] = None
 
         today = datetime.date.today()
-        d0 = initial or today
-        self._y, self._m = d0.year, d0.month
+        if initial is None:
+            initial = today
+
+        self._y = initial.year
+        self._m = initial.month
 
         outer = ttk.Frame(self, padding=8)
         outer.grid(row=0, column=0, sticky="nsew")
+        outer.grid_columnconfigure(0, weight=1)
 
-        # Header: prev / month label / next / Today
+        # Header: month nav + Today
         hdr = ttk.Frame(outer)
         hdr.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        hdr.grid_columnconfigure(1, weight=1)
         ttk.Button(hdr, text="◀", width=3, command=lambda: self._shift(-1)).pack(side="left")
         self._label = ttk.Label(hdr, width=18, anchor="center")
         self._label.pack(side="left", expand=True)
@@ -49,9 +55,9 @@ class _DatePickerDialog(tk.Toplevel):
         self._rebuild()
         self.wait_visibility()
         self.focus_set()
-        self.bind("<Escape>", lambda e: self._cancel())
+        self.bind("<Escape>", lambda _e: self._cancel())
 
-    def _shift(self, delta_months: int):
+    def _shift(self, delta_months: int) -> None:
         y, m = self._y, self._m
         m += delta_months
         while m < 1:
@@ -63,28 +69,34 @@ class _DatePickerDialog(tk.Toplevel):
         self._y, self._m = y, m
         self._rebuild()
 
-    def _rebuild(self):
-        self._label.config(text=f"{datetime.date(self._y, self._m, 1):%B %Y}")
-        # Clear old day buttons (rows > 0)
-        for w in list(self._grid.grid_slaves()):
-            if w.grid_info().get("row", 0) != 0:
-                w.destroy()
-        cal = calendar.Calendar()
-        weeks = cal.monthdatescalendar(self._y, self._m)
-        for r, week in enumerate(weeks, start=1):
-            for c, d in enumerate(week):
-                is_this_month = (d.month == self._m)
-                btn = ttk.Button(self._grid, text=str(d.day), width=4, command=(lambda dd=d: self._choose(dd)))
-                btn.state(["!disabled"] if is_this_month else ["disabled"])
-                btn.grid(row=r, column=c, padx=1, pady=1)
-
-    def _choose(self, d: datetime.date):
+    def _choose(self, d: datetime.date) -> None:
         self.result = d.isoformat()
         self.destroy()
 
-    def _cancel(self):
+    def _cancel(self) -> None:
         self.result = None
         self.destroy()
+
+    def _rebuild(self) -> None:
+        # Clear rows > 0
+        for w in self._grid.grid_slaves():
+            info = w.grid_info()
+            if int(info.get("row", 0)) > 0:
+                w.destroy()
+
+        self._label.config(text=f"{calendar.month_name[self._m]} {self._y}")
+
+        first_wd, days_in_month = calendar.monthrange(self._y, self._m)  # Monday=0
+        col = (first_wd + 6) % 7  # Monday-first
+        row = 1
+        for day in range(1, days_in_month + 1):
+            d = datetime.date(self._y, self._m, day)
+            b = ttk.Button(self._grid, text=str(day), width=4, command=lambda dd=d: self._choose(dd))
+            b.grid(row=row, column=col, padx=1, pady=1)
+            col += 1
+            if col > 6:
+                col = 0
+                row += 1
 
 
 # ------------------------------ Panel proper ------------------------------
@@ -99,7 +111,7 @@ MENU_COLS: List[Tuple[str, str, int, str]] = [
     ("notes", "Notes", 240, "w"),
 ]
 
-# Recipe library (picker) inside Menu tab
+# Recipe library columns (now inside a Notebook tab)
 REC_COLS: List[Tuple[str, str, int, str]] = [
     ("title", "Title", 280, "w"),
     ("source", "Source", 140, "w"),
@@ -112,10 +124,16 @@ MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Other"]
 
 
 class MenuPanel(BasePanel):
-    """Simple planner: left = planned menu; right = recipe library with new time/servings columns."""
+    \"\"\"Notebook with two tabs: Menu (default) and Recipes.
+    Wrapped in ScrollFrame so the whole panel can pan horizontally when content is wider than the viewport.
+    \"\"\"
     def __init__(self, master, app, **kw):
         self._tree_menu: Optional[ttk.Treeview] = None
         self._tree_rec: Optional[ttk.Treeview] = None
+        self._menu_hsb: Optional[ttk.Scrollbar] = None
+        self._rec_hsb: Optional[ttk.Scrollbar] = None
+        self._scroller: Optional[ScrollFrame] = None
+        self._right_nb: Optional[ttk.Notebook] = None
         super().__init__(master, app, **kw)
 
     # ---------- helpers ----------
@@ -127,59 +145,113 @@ class MenuPanel(BasePanel):
             except Exception:
                 init_date = None
         dp = _DatePickerDialog(parent, initial=init_date, title="Choose Date")
-        dp.wait_window()  
+        dp.wait_window()
         return dp.result  # ISO string or None
+
+    def _setup_treeview(self, treeview: ttk.Treeview, columns: List[Tuple[str, str, int, str]]) -> None:
+        for k, h, w, a in columns:
+            treeview.heading(k, text=h)
+            anc = {"w": "w", "c": "center", "e": "e"}.get(a, "w")
+            treeview.column(k, width=w, anchor=anc, stretch=False)
 
     # ---------- UI ----------
     def build(self) -> None:
+        # Outer: scrollable wrapper so the content can pan horizontally when wider than the viewport
         self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        scroller = ScrollFrame(self, autohide=True)
+        self._scroller = scroller
+        scroller.grid(row=0, column=0, sticky="nsew")
+        # persist + update on size/content changes
+        try:
+            scroller.hbar.bind("<ButtonRelease-1>", lambda _e: (self._save_scroll(), self._update_scrollbars()))
+            scroller.content.bind("<Configure>", lambda _e: self._update_scrollbars())
+            scroller.canvas.bind("<Configure>", lambda _e: self._update_scrollbars())
+            scroller.content.bind("<Shift-MouseWheel>", lambda _e: self._save_scroll())
+        except Exception:
+            pass
 
-        # Left: planned menu
-        left = ttk.Frame(self, padding=6)
-        left.grid(row=0, column=0, sticky="ns")
-        ttk.Label(left, text="Menu").pack(anchor="w")
-        wrap_m = ttk.Frame(left)
+        outer = scroller.content
+        # Keep natural width so the outer scroller can pan
+        outer.grid_rowconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+
+        # Single Notebook hosting both tabs: Menu (default) and Recipes
+        nb = ttk.Notebook(outer)
+        self._right_nb = nb
+        nb.grid(row=0, column=0, sticky="nsew")
+
+        # ----- TAB: Menu (default) -----
+        tab_menu = ttk.Frame(nb, padding=6)
+        nb.add(tab_menu, text="Menu")
+        nb.select(tab_menu)  # make Menu the default-selected tab
+
+        ttk.Label(tab_menu, text="Menu").pack(anchor="w")
+        wrap_m = ttk.Frame(tab_menu)
         wrap_m.pack(fill="both", expand=True)
+        wrap_m.grid_rowconfigure(0, weight=1)
+        wrap_m.grid_columnconfigure(0, weight=1)
+
         tvm = ttk.Treeview(
             wrap_m, columns=[c[0] for c in MENU_COLS], show="headings", height=16, selectmode="extended"
         )
-        for k, h, w, a in MENU_COLS:
-            tvm.heading(k, text=h)
-            anc = {"w": "w", "c": "center", "e": "e"}.get(a, "w")
-            tvm.column(k, width=w, anchor=anc, stretch=True)
-        tvm.pack(fill="both", expand=True)
+        self._setup_treeview(tvm, MENU_COLS)
+        tvm.grid(row=0, column=0, sticky="nw")
+        # per-tree horizontal scrollbar (fallback when outer H-bar hidden)
+        hsbm = ttk.Scrollbar(wrap_m, orient="horizontal", command=tvm.xview)
+        self._menu_hsb = hsbm
+        tvm.configure(xscrollcommand=hsbm.set)
+        hsbm.grid(row=1, column=0, sticky="ew")
         self._tree_menu = tvm
 
-        btns = ttk.Frame(left)
+        # Buttons for Menu tab
+        btns = ttk.Frame(tab_menu)
         btns.pack(fill="x", pady=(6, 0))
-        ttk.Button(btns, text="Add From Selection", command=self.add_from_selection).pack(fill="x")
-        ttk.Button(btns, text="Edit", command=self.edit_selected).pack(fill="x", pady=(4, 0))
-        ttk.Button(btns, text="Delete", command=self.delete_selected).pack(fill="x")
+        ttk.Button(btns, text="Edit", command=self.edit_selected).pack(fill="x")
+        ttk.Button(btns, text="Delete", command=self.delete_selected).pack(fill="x", pady=(4, 0))
         ttk.Button(btns, text="Export HTML", command=self.export_html_menu).pack(fill="x", pady=(6, 0))
 
-        # Right: recipe library (for picking)
-        right = ttk.Frame(self, padding=6)
-        right.grid(row=0, column=1, sticky="nsew")
-        right.grid_rowconfigure(1, weight=1)
-        right.grid_columnconfigure(0, weight=1)
-        ttk.Label(right, text="Recipes").grid(row=0, column=0, sticky="w")
-        tuv = ttk.Treeview(right, columns=[c[0] for c in REC_COLS], show="headings", selectmode="extended")
-        for k, h, w, a in REC_COLS:
-            tuv.heading(k, text=h)
-            anc = {"w": "w", "c": "center", "e": "e"}.get(a, "w")
-            tuv.column(k, width=w, anchor=anc, stretch=True)
+        # ----- TAB: Recipes -----
+        tab_recipes = ttk.Frame(nb, padding=(6, 6))
+        nb.add(tab_recipes, text="Recipes")
+
+        ttk.Label(tab_recipes, text="Recipes").grid(row=0, column=0, sticky="w")
+
+        tuv = ttk.Treeview(
+            tab_recipes,
+            columns=[c[0] for c in REC_COLS],
+            show="headings",
+            selectmode="extended",
+            height=16,
+        )
+        self._setup_treeview(tuv, REC_COLS)
         tuv.grid(row=1, column=0, sticky="nsew")
         self._tree_rec = tuv
 
-        vsb = ttk.Scrollbar(right, orient="vertical", command=tuv.yview)
-        tuv.configure(yscroll=vsb.set)
+        vsb = ttk.Scrollbar(tab_recipes, orient="vertical", command=tuv.yview)
+        tuv.configure(yscrollcommand=vsb.set)
         vsb.grid(row=1, column=1, sticky="ns")
 
-        # Add double-click event to recipe treeview
+        # per-tree horizontal scrollbar (fallback)
+        hsbr = ttk.Scrollbar(tab_recipes, orient="horizontal", command=tuv.xview)
+        self._rec_hsb = hsbr
+        tuv.configure(xscrollcommand=hsbr.set)
+        hsbr.grid(row=2, column=0, sticky="ew")
+
+        # "Add From Selection" lives in the Recipes tab
+        tab_recipes_btns = ttk.Frame(tab_recipes)
+        tab_recipes_btns.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Button(tab_recipes_btns, text="Add From Selection", command=self.add_from_selection).pack(fill="x")
+
+        # Tab layout weights
+        tab_menu.grid_columnconfigure(0, weight=1)
+        tab_recipes.grid_rowconfigure(1, weight=1)
+        tab_recipes.grid_columnconfigure(0, weight=1)
+
+        # Interactions
         tuv.bind("<Double-1>", self._open_recipe_html)
 
-        # Menus
+        # Context menu for menu table
         m_menu = tk.Menu(self, tearoff=0)
         m_menu.add_command(label="Edit", command=self.edit_selected)
         m_menu.add_command(label="Delete", command=self.delete_selected)
@@ -191,7 +263,7 @@ class MenuPanel(BasePanel):
                 m_menu.grab_release()
 
         tvm.bind("<Button-3>", popm)
-        tvm.bind("<Double-1>", lambda e: self.edit_selected())
+        tvm.bind("<Double-1>", lambda _e: self.edit_selected())
 
         self.refresh_recipes()
         self.refresh_menu()
@@ -211,14 +283,20 @@ class MenuPanel(BasePanel):
                    COALESCE(servings,0)   AS servings
               FROM recipes
              ORDER BY LOWER(title)
-        """
+            """
         ).fetchall()
         for r in rows:
             tv.insert(
                 "",
                 "end",
                 iid=f"rec::{r['id']}",
-                values=[r["title"] or "", r["source"] or "", r["prep_time"] or "", r["cook_time"] or "", r["servings"] or 0],
+                values=[
+                    r["title"] or "",
+                    r["source"] or "",
+                    r["prep_time"] or "",
+                    r["cook_time"] or "",
+                    r["servings"] or 0,
+                ],
             )
 
     def refresh_menu(self) -> None:
@@ -237,7 +315,7 @@ class MenuPanel(BasePanel):
               FROM menu_plan mp
               LEFT JOIN recipes r ON r.id = mp.recipe_id
              ORDER BY mp.date ASC, mp.meal ASC, LOWER(mp.title)
-        """
+            """
         ).fetchall()
         for r in rows:
             tv.insert(
@@ -262,10 +340,10 @@ class MenuPanel(BasePanel):
             return
         sel = [i for i in tvr.selection() if i.startswith("rec::")]
         if not sel:
-            messagebox.showinfo("Menu", "Select recipe(s) on the right.", parent=self.winfo_toplevel())
+            messagebox.showinfo("Menu", "Select recipe(s) in the Recipes tab.", parent=self.winfo_toplevel())
             return
 
-        # Replaces the free-text prompt with a calendar picker (returns ISO date)
+        # Calendar picker → ISO date
         date = self._open_date_picker(self.winfo_toplevel())
         if not date:
             return
@@ -307,17 +385,18 @@ class MenuPanel(BasePanel):
 
         frm = ttk.Frame(dlg, padding=8)
         frm.grid(row=0, column=0, sticky="nsew")
+        frm.grid_columnconfigure(1, weight=1)
 
-        v_date = tk.StringVar(value=r["date"] or "")
-        v_meal = tk.StringVar(value=r["meal"] or "Dinner")
-        v_title = tk.StringVar(value=r["title"] or "")
-        v_notes = tk.StringVar(value=r["notes"] or "")
+        v_date = tk.StringVar(value=(r["date"] or ""))
+        v_meal = tk.StringVar(value=(r["meal"] or "Dinner"))
+        v_title = tk.StringVar(value=(r["title"] or ""))
+        v_notes = tk.StringVar(value=(r["notes"] or ""))
 
-        def row(label, w, rowi):
-            ttk.Label(frm, text=label).grid(row=rowi, column=0, sticky="e", padx=(0, 8), pady=(0, 4))
-            w.grid(row=rowi, column=1, sticky="ew", pady=(0, 4))
+        def row(lbl: str, w: tk.Widget, i: int) -> None:
+            ttk.Label(frm, text=lbl).grid(row=i, column=0, sticky="w", padx=(0, 8), pady=4)
+            w.grid(row=i, column=1, sticky="ew", pady=4)
 
-        # Date row: Entry + 📅 button
+        # Date row: Entry + calendar button
         f_date = ttk.Frame(frm)
         e_date = ttk.Entry(f_date, textvariable=v_date, width=12)
         e_date.pack(side="left")
@@ -335,9 +414,9 @@ class MenuPanel(BasePanel):
         row("Notes", ttk.Entry(frm, textvariable=v_notes, width=48), 3)
         frm.grid_columnconfigure(1, weight=1)
 
-        out = {}
+        out: dict = {}
 
-        def save():
+        def save() -> None:
             out.update(
                 {
                     "date": v_date.get().strip(),
@@ -369,6 +448,7 @@ class MenuPanel(BasePanel):
             return
         sel = tv.selection()
         if not sel:
+            messagebox.showinfo("Menu", "Select at least one row to delete.", parent=self.winfo_toplevel())
             return
         if not self.confirm_delete(len(sel)):
             return
@@ -390,7 +470,7 @@ class MenuPanel(BasePanel):
             title="Menu Plan",
             columns=headings,
             rows=rows,
-            subtitle="Generated from Celiac Culinary",
+            subtitle="Generated from Celiogix",
             meta={"Source": "Menu", "Rows": len(rows)},
             open_after=True,
         )
@@ -400,31 +480,42 @@ class MenuPanel(BasePanel):
         return getattr(self.app, "cookbook_panel", None)
 
     def _open_recipe_html(self, event: tk.Event) -> None:
-        tvr = self._tree_rec
-        if not isinstance(tvr, ttk.Treeview):
+        tv = self._tree_rec
+        if not isinstance(tv, ttk.Treeview):
             return
-        sel = tvr.selection()
+        sel = tv.selection()
         if len(sel) != 1:
-            self.show_info("Menu", "Select one recipe to print.")
+            messagebox.showinfo("Recipes", "Select one recipe to print.", parent=self.winfo_toplevel())
             return
-
         iid = sel[0]
         if not iid.startswith("rec::"):
             return
-
         rid = int(iid.split("::", 1)[1])
-        # Fetch full recipe data from the database
-        recipe = self.db.execute(
-            """
-            SELECT title, source, prep_time, cook_time, servings, ingredients, instructions, url, tags, rating
-            FROM recipes
-            WHERE id=?
-            """,
-            (rid,)
-        ).fetchone()
-        if not recipe:
-            self.show_error("Error", "Recipe not found.")
-            return
+
+        # Prefer pulling the recipe from the cookbook panel if available
+        cookbook_panel = self._find_cookbook_panel()
+        recipe = None
+        if cookbook_panel is not None:
+            recipe = cookbook_panel.get_recipe_by_id(rid)
+
+        # Fallback: query DB directly if the cookbook panel isn't available
+        if recipe is None:
+            recipe = self.db.execute(
+                """
+                SELECT
+                    id, title, source, ingredients, instructions,
+                    COALESCE(prep_time, '') AS prep_time,
+                    COALESCE(cook_time, '') AS cook_time,
+                    COALESCE(servings, 0)  AS servings,
+                    COALESCE(notes, '')    AS notes
+                FROM recipes
+                WHERE id = ?
+                """,
+                (rid,),
+            ).fetchone()
+            if not recipe:
+                messagebox.showerror("Error", "Recipe not found.", parent=self.winfo_toplevel())
+                return
 
         # Convert sqlite3.Row to dict for export
         recipe_dict = dict(recipe)
@@ -432,5 +523,100 @@ class MenuPanel(BasePanel):
             recipes=[recipe_dict],
             title=recipe_dict.get("title", "Recipe"),
             subtitle="Ready for printing",
-            open_after=True
+            open_after=True,
         )
+
+    # ---------- Scroll persistence ----------
+    def _save_scroll(self) -> None:
+        \"\"\"Persist horizontal scroll position into app._ui_state.\"\"\"
+        try:
+            sc = self._scroller
+            if not sc:
+                return
+            first, _last = sc.canvas.xview()
+            state = getattr(self.app, "_ui_state", None)
+            if not isinstance(state, dict):
+                state = {}
+                setattr(self.app, "_ui_state", state)
+            state["menu.scroll_x"] = float(first)
+        except Exception:
+            pass
+
+    def _restore_scroll(self) -> None:
+        try:
+            sc = self._scroller
+            if not sc:
+                return
+            state = getattr(self.app, "_ui_state", {})
+            pos = float(state.get("menu.scroll_x", 0.0) or 0.0)
+            sc.canvas.xview_moveto(pos)
+        except Exception:
+            pass
+
+    def on_show(self) -> None:
+        # when panel becomes visible, restore position and re-evaluate scrollbars
+        self.after(0, self._restore_scroll)
+        self.after(0, self._update_scrollbars)
+
+    def _update_scrollbars(self) -> None:
+        \"\"\"Auto-hide outer H-bar if content fits; show per-tree H-bars as fallback.
+        Also wires hotkeys for horizontal navigation.\"\"\"
+        sc = self._scroller
+        if not sc:
+            return
+        try:
+            # compare content requested width vs visible canvas width
+            sc.content.update_idletasks()
+            content_w = sc.content.winfo_reqwidth()
+            canvas_w = sc.canvas.winfo_width()
+            outer_needed = content_w > (canvas_w + 1)
+
+            # Toggle per-tree H-bars
+            for tv, hsb in ((self._tree_menu, self._menu_hsb), (self._tree_rec, self._rec_hsb)):
+                if not (isinstance(tv, ttk.Treeview) and isinstance(hsb, ttk.Scrollbar)):
+                    continue
+                if outer_needed:
+                    # hide per-tree bars to avoid double H-bars
+                    try:
+                        hsb.grid_remove()
+                        tv.configure(xscrollcommand="")  # detach; outer handles pan
+                    except Exception:
+                        pass
+                else:
+                    # show per-tree bars for each tree if outer isn't needed
+                    try:
+                        tv.configure(xscrollcommand=hsb.set)
+                        hsb.grid()
+                    except Exception:
+                        pass
+
+            # Show/hide outer H-bar
+            sc.set_hbar_visible(outer_needed)
+
+            # keybindings for horizontal nav
+            self.bind_all("<Shift-MouseWheel>", lambda e: self._nudge_scroll(-0.08 if e.delta > 0 else +0.08))
+            self.bind_all("<Control-MouseWheel>", lambda e: self._nudge_scroll(-0.08 if e.delta > 0 else +0.08))
+            self.bind_all("<Shift-Left>", lambda _e: self._nudge_scroll(-0.08))
+            self.bind_all("<Shift-Right>", lambda _e: self._nudge_scroll(+0.08))
+            self.bind_all("<Home>", lambda _e: self._scroll_to(0.0))
+            self.bind_all("<End>", lambda _e: self._scroll_to(1.0))
+            self.bind_all("<Shift-Prior>", lambda _e: self._nudge_scroll(-0.25))  # PageUp
+            self.bind_all("<Shift-Next>", lambda _e: self._nudge_scroll(+0.25))  # PageDown
+        except Exception:
+            pass
+
+    def _nudge_scroll(self, frac_delta: float) -> None:
+        sc = self._scroller
+        if not sc:
+            return
+        first, _last = sc.canvas.xview()
+        new_first = max(0.0, min(1.0, first + frac_delta))
+        sc.canvas.xview_moveto(new_first)
+        self._save_scroll()
+
+    def _scroll_to(self, pos: float) -> None:
+        sc = self._scroller
+        if not sc:
+            return
+        sc.canvas.xview_moveto(max(0.0, min(1.0, pos)))
+        self._save_scroll()

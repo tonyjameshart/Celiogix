@@ -2,8 +2,9 @@
   "ExpandedNodes": [
     "",
     "\\panels",
-    "\\services"
+    "\\services",
+    "\\utils"
   ],
-  "SelectedNode": "\\panels\\shopping_list_panel.py",
+  "SelectedNode": "\\services\\themes.py",
   "PreviewInSolutionExplorer": false
 }

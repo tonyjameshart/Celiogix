@@ -36,6 +36,19 @@ class CookbookPanel(BasePanel):
         self._fav_first: Optional[tk.BooleanVar] = None
         super().__init__(master, app, **kw)
 
+    # ---------- search ----------
+    def _do_search(self, q: str | None = None) -> None:
+        if q is None:
+            # fall back to the search var if available
+            v = self._widgets.get("search_var")
+            try:
+                q = (v.get() if v else "").strip()
+            except Exception:
+                q = ""
+        q = q.strip() if q else ""
+        # stub: replace with real search logic later
+        self.info(f"Search is stubbed for now. Query: {q}")
+
     # ---------- UI ----------
     def build(self) -> None:
         self.grid_rowconfigure(0, weight=1)
@@ -50,7 +63,10 @@ class CookbookPanel(BasePanel):
 
         # Search tab (basic)
         t_search = ttk.Frame(nb); nb.add(t_search, text="Search")
-        sbar, svar, _ = self.build_search_bar(t_search, on_return=lambda q: self._do_search(), refresh_text="Search")
+        sbar, svar, _ = self.build_search_bar(
+            t_search,
+            on_return=self._do_search,   # will be called with the query string
+            refresh_text="Search")
         sbar.pack(fill="x", padx=6, pady=6)
         ttk.Label(t_search, text="(Search providers coming soon)").pack(anchor="w", padx=12, pady=12)
         self._search_q = svar

@@ -5,7 +5,8 @@ import os
 import sqlite3
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog, colorchooser
-import csv, json
+import csv
+import json
 from typing import List, Dict, Any, Optional, Tuple
 
 from panels.base_panel import BasePanel
@@ -18,6 +19,100 @@ from services.themes import (
     get_active_theme_name,
     make_theme_instance,
 )
+
+# --- scroll container (vertical + optional horizontal, with forced overflow) --
+class _ScrollFrame(ttk.Frame):
+    """
+    Canvas + inner body frame + scrollbars.
+    - xscroll=True enables horizontal scrolling.
+    - force_hscroll=True keeps the inner window a bit wider than the canvas so
+      the horizontal scrollbar is guaranteed to appear (useful for Notebook tabs).
+    """
+    def __init__(self, parent, *, xscroll: bool = False, force_hscroll: bool = False, hoffset: int = 200, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.xscroll_enabled = bool(xscroll)
+        self.force_hscroll = bool(force_hscroll)
+        self.hoffset = int(hoffset)
+
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview) if self.xscroll_enabled else None
+
+        if self.xscroll_enabled:
+            self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+        else:
+            self.canvas.configure(yscrollcommand=self.vsb.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns")
+        if self.hsb:
+            self.hsb.grid(row=1, column=0, sticky="ew")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # inner body where real content lives
+        self.body = ttk.Frame(self)
+        self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
+
+        # update scrollregion and sizing
+        self.body.bind("<Configure>", self._on_body_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        # mouse-wheel scrolling (Win/macOS) + Linux buttons
+        for w in (self.canvas, self.body):
+            w.bind("<Enter>", lambda _e: self.canvas.focus_set())
+            w.bind("<MouseWheel>", self._on_mousewheel)            # Win/macOS
+            w.bind("<Button-4>", self._on_linux_scroll_up)         # Linux
+            w.bind("<Button-5>", self._on_linux_scroll_down)
+            w.bind("<Shift-MouseWheel>", self._on_mousewheel_x)
+            w.bind("<Shift-Button-4>", self._on_linux_scroll_left)
+            w.bind("<Shift-Button-5>", self._on_linux_scroll_right)
+
+        # match theme background
+        try:
+            bg = ttk.Style().lookup("TFrame", "background") or self.cget("background")
+            self.canvas.configure(background=bg)
+        except Exception:
+            pass
+
+    def _on_body_configure(self, _e=None):
+        # keep scrollregion correct
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, e=None):
+        cw = self.canvas.winfo_width()
+
+        if not self.xscroll_enabled:
+            # Tie width to canvas when horizontal scrolling is off
+            self.canvas.itemconfigure(self._win, width=cw)
+        else:
+            # If forcing horizontal visibility, keep inner width > canvas width
+            if self.force_hscroll:
+                req = self.body.winfo_reqwidth()
+                target = max(req, cw + max(1, self.hoffset))
+                self.canvas.itemconfigure(self._win, width=target)
+            else:
+                # Natural width (requested) to allow overflow only when content requires it
+                self.canvas.itemconfigure(self._win, width=self.body.winfo_reqwidth())
+
+        # Height is always natural; vertical scrollbar appears when content taller than canvas.
+
+    # wheel handlers
+    def _on_mousewheel(self, e):
+        self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+
+    def _on_mousewheel_x(self, e):
+        if not self.xscroll_enabled:
+            return
+        self.canvas.xview_scroll(-1 if e.delta > 0 else 1, "units")
+
+    def _on_linux_scroll_up(self, _e):   self.canvas.yview_scroll(-1, "units")
+    def _on_linux_scroll_down(self, _e): self.canvas.yview_scroll(+1, "units")
+    def _on_linux_scroll_left(self, _e):
+        if self.xscroll_enabled: self.canvas.xview_scroll(-1, "units")
+    def _on_linux_scroll_right(self, _e):
+        if self.xscroll_enabled: self.canvas.xview_scroll(+1, "units")
+
 
 # ---- small helpers ----
 def _ci_map(header_row: List[str]) -> Dict[str, int]:
@@ -38,73 +133,40 @@ def _read_csv_rows(path: str) -> List[List[str]]:
             rows.append(r)
     return rows
 
-def _combo_dialog(parent: tk.Widget, title: str, prompt: str, options: List[str], *, allow_new: bool = True, initial: str = "") -> Optional[str]:
-    """Simple modal combobox dialog. Returns chosen string or None."""
-    top = tk.Toplevel(parent)
-    top.title(title)
-    top.transient(parent.winfo_toplevel())
-    top.resizable(False, False)
-    top.grab_set()
-
-    frm = ttk.Frame(top, padding=10)
-    frm.grid(row=0, column=0, sticky="nsew")
-
-    ttk.Label(frm, text=prompt).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-
-    var = tk.StringVar(value=initial)
-    cb = ttk.Combobox(frm, textvariable=var, values=sorted(options, key=str.lower), state="normal" if allow_new else "readonly", width=40)
-    cb.grid(row=1, column=0, columnspan=2, sticky="ew")
-    cb.focus_set()
-
-    result: List[str] = []
-
-    def ok() -> None:
-        val = (var.get() or "").strip()
-        if not val:
-            messagebox.showerror(title, "Value cannot be empty.", parent=top)
-            return
-        result[:] = [val]
-        top.destroy()
-
-    def cancel() -> None:
-        top.destroy()
-
-    btn_ok = ttk.Button(frm, text="OK", command=ok)
-    btn_ok.grid(row=2, column=0, pady=(8, 0), sticky="e")
-    btn_cancel = ttk.Button(frm, text="Cancel", command=cancel)
-    btn_cancel.grid(row=2, column=1, pady=(8, 0), sticky="w")
-
-    top.bind("<Return>", lambda e: ok())
-    top.bind("<Escape>", lambda e: cancel())
-
-    parent.wait_window(top)
-    return result[0] if result else None
-
 
 class SettingsPanel(BasePanel):
     """Settings with Notebook tabs: General, Import/Export, Search URLs, Categories, Theme."""
 
-    # --- convenience wrappers (so we don't rely on BasePanel names) ---
+    # --- convenience wrappers so self.info(...) never collides with tk.Pack ---
     def info(self, msg: str) -> None:
         try:
             self.set_status(msg)
         except Exception:
             pass
-        messagebox.showinfo("Settings", msg, parent=self.winfo_toplevel())
+        try:
+            messagebox.showinfo("Settings", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
 
     def warn(self, msg: str) -> None:
         try:
             self.set_status(msg)
         except Exception:
             pass
-        messagebox.showwarning("Settings", msg, parent=self.winfo_toplevel())
+        try:
+            messagebox.showwarning("Settings", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
 
     def error(self, msg: str) -> None:
         try:
             self.set_status(msg)
         except Exception:
             pass
-        messagebox.showerror("Settings", msg, parent=self.winfo_toplevel())
+        try:
+            messagebox.showerror("Settings", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
 
     # ------------- UI build -------------
     def build(self) -> None:
@@ -131,13 +193,13 @@ class SettingsPanel(BasePanel):
 
         # ---- General tab ----
         self._build_general(t_general)
-        # ---- Import/Export (your Pantry/Cookbook/Shopping + UPC layout) ----
+        # ---- Import/Export (Pantry/Cookbook/Shopping + Bulk UPC) ----
         self._build_io(t_io)
         # ---- Search URLs ----
         self._build_urls(t_urls)
         # ---- Categories (Category + Subcategory) ----
         self._build_categories(t_cats)
-        # ---- Theme (granular end-user customizations + JSON import/export) ----
+        # ---- Theme (granular customizations + JSON import/export + scrolling) ----
         self._build_theme(t_theme)
 
     # ------------- General -------------
@@ -225,7 +287,6 @@ class SettingsPanel(BasePanel):
                 w = csv.writer(f)
                 w.writerow(cols)
                 for r in rows:
-                    # row can be Row or tuple; use name-based when possible
                     if isinstance(r, sqlite3.Row):
                         w.writerow([r[c] for c in cols])
                     else:
@@ -378,7 +439,6 @@ class SettingsPanel(BasePanel):
         try:
             with self.db:
                 for u in upcs:
-                    # avoid duplicates even if no UNIQUE constraint
                     row = self.db.execute("SELECT id FROM pantry WHERE upc = ?", (u,)).fetchone()
                     if row:
                         skipped += 1
@@ -658,8 +718,7 @@ class SettingsPanel(BasePanel):
             messagebox.showinfo("Categories", "Select a category to reassign.", parent=self.winfo_toplevel())
             return
 
-        choices = [c for c in self._cats_collect_counts().keys() if c != old_label and c != "(Uncategorized)"]
-        target = _combo_dialog(self, "Bulk Reassign", f"Move all items from '{old_label}' to:", choices, allow_new=True)
+        target = simpledialog.askstring("Bulk Reassign", f"Move all items from '{old_label}' to:", parent=self.winfo_toplevel())
         if target is None:
             return
         target = target.strip()
@@ -875,8 +934,7 @@ class SettingsPanel(BasePanel):
             messagebox.showinfo("Subcategories", "Select a subcategory to reassign.", parent=self.winfo_toplevel())
             return
 
-        choices = [c for c in self._subcats_collect_counts().keys() if c != old_label and c != "(Uncategorized)"]
-        target = _combo_dialog(self, "Bulk Reassign Subcategory", f"Move all items from '{old_label}' to:", choices, allow_new=True)
+        target = simpledialog.askstring("Bulk Reassign Subcategory", f"Move all items from '{old_label}' to:", parent=self.winfo_toplevel())
         if target is None:
             return
         target = target.strip()
@@ -889,7 +947,8 @@ class SettingsPanel(BasePanel):
             s = (sub_val or "").strip()
             if old_label == "(Uncategorized)":
                 return s == ""
-            return canonical_subcategory(s) == old_label
+            from utils.categorize import canonical_subcategory as canon
+            return canon(s) == old_label
 
         cur = self.db.cursor()
         ids = [int(r["id"]) for r in cur.execute("SELECT id, subcategory FROM pantry").fetchall() if match_row(r["subcategory"])]
@@ -936,6 +995,41 @@ class SettingsPanel(BasePanel):
         self._subcats_refresh()
         self.info(f"Renamed/Merged subcategory → {changed} row(s) updated.")
 
+    # In panels/settings_panel.py, inside class SettingsPanel
+
+    def _subcats_clean(self) -> None:
+        """
+        Canonicalize all pantry subcategory labels, fixing case/spacing/synonyms.
+        Only touches the `pantry` table (Subcategories tab is pantry-focused).
+        """
+        try:
+            from utils.categorize import canonical_subcategory
+        except Exception:
+            # If categorize utils aren't available, bail gracefully.
+            self.warn("Canonicalizer not available.")
+            return
+
+        cur = self.db.cursor()
+        changed = 0
+        try:
+            rows = cur.execute("SELECT id, subcategory FROM pantry").fetchall()
+            for r in rows:
+                rid = int(r["id"])
+                old = r["subcategory"] or ""
+                new = canonical_subcategory(old)
+                if new != old:
+                    cur.execute("UPDATE pantry SET subcategory=? WHERE id=?", (new, rid))
+                    changed += 1
+            self.db.commit()
+        except Exception as e:
+            self.error(f"Failed to clean subcategories:\n{e!s}")
+            return
+
+        # Refresh the tab’s table
+        self._subcats_refresh()
+        self.info(f"Cleaned subcategories on {changed} row(s).")
+
+
     def _subcats_delete(self) -> None:
         from utils.categorize import canonical_subcategory
         old_label = self._subcats_selected()
@@ -961,32 +1055,18 @@ class SettingsPanel(BasePanel):
         self._subcats_refresh()
         self.info(f"Deleted subcategory label → {changed} row(s) set to (Uncategorized).")
 
-    def _subcats_clean(self) -> None:
-        from utils.categorize import canonical_subcategory
-        cur = self.db.cursor()
-        changed = 0
-        try:
-            rows = cur.execute("SELECT id, subcategory FROM pantry").fetchall()
-            for r in rows:
-                cid = int(r["id"])
-                old = r["subcategory"] or ""
-                new = canonical_subcategory(old)
-                if new != old:
-                    cur.execute("UPDATE pantry SET subcategory=? WHERE id=?", (new, cid))
-                    changed += 1
-        except Exception:
-            pass
-        self.db.commit()
-        self._subcats_refresh()
-        self.info(f"Cleaned subcategories on {changed} row(s).")
-
-    # ------------- Theme (granular end-user customizations) -------------
+    # ------------- Theme (granular customizations, scrolling) -------------
     def _build_theme(self, parent: tk.Widget) -> None:
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(2, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        # enable BOTH vertical and horizontal scrolling; force horizontal to be visible
+        sf = _ScrollFrame(parent, xscroll=True, force_hscroll=False)
+        sf.grid(row=0, column=0, sticky="nsew")
+        body = sf.body
 
         # --- Toolbar: theme picker & actions ---
-        bar = ttk.Frame(parent, padding=(8, 6))
+        bar = ttk.Frame(body, padding=(8, 6))
         bar.grid(row=0, column=0, sticky="ew")
 
         ttk.Label(bar, text="Theme:").pack(side="left")
@@ -999,11 +1079,10 @@ class SettingsPanel(BasePanel):
             width=28,
         )
         self._theme_combo.pack(side="left", padx=(6, 6))
-        self._theme_combo.bind("<<ComboboxSelected>>",
-                       lambda e: self._load_theme_into_editor(self._theme_var.get()))
+        self._theme_combo.bind("<<ComboboxSelected>>", lambda _e: self._load_theme_into_editor(self._theme_var.get()))
 
         def on_activate():
-            name = self._theme_var.get().strip()
+            name = (self._theme_var.get() or "").strip()
             if not name:
                 return
             set_active_theme(name)
@@ -1033,7 +1112,6 @@ class SettingsPanel(BasePanel):
             spec = self._collect_editor_spec()
             persist_theme(spec)
             self._refresh_theme_names(select=spec["name"])
-            # If we saved the active theme, re-apply immediately
             if spec["name"] == get_active_theme_name():
                 self.app.theme = make_theme_instance(spec["name"])
                 self.app.theme.apply(self.app)
@@ -1042,7 +1120,7 @@ class SettingsPanel(BasePanel):
         ttk.Button(bar, text="Save", command=on_save).pack(side="left", padx=(6, 0))
 
         def on_delete():
-            name = self._theme_var.get().strip()
+            name = (self._theme_var.get() or "").strip()
             if not name:
                 return
             if not self.confirm_delete(1):
@@ -1055,14 +1133,12 @@ class SettingsPanel(BasePanel):
 
         ttk.Button(bar, text="Delete", command=on_delete).pack(side="left", padx=(6, 0))
 
-        # Import/Export themes
         ttk.Button(bar, text="Import Theme…", command=self._theme_import).pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Export Theme…", command=self._theme_export).pack(side="left", padx=(6, 0))
 
         # --- Editor form (two columns) ---
-        wrap = ttk.Frame(parent, padding=(10, 8))
-        wrap.grid(row=1, column=0, sticky="ew")
-        wrap.grid_columnconfigure(1, weight=1)
+        wrap = ttk.Frame(body, padding=(10, 8))
+        wrap.grid(row=1, column=0, sticky="w")  # 'w' so it keeps natural width (helps horizontal overflow)
 
         ttk.Label(wrap, text="Theme Name").grid(row=0, column=0, sticky="w")
         self._name_var = tk.StringVar()
@@ -1071,7 +1147,7 @@ class SettingsPanel(BasePanel):
         # colors
         ttk.Label(wrap, text="Colors", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", pady=(8, 4))
         colors_frame = ttk.Frame(wrap)
-        colors_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
+        colors_frame.grid(row=2, column=0, columnspan=2, sticky="w")
         self._color_vars: Dict[str, tk.StringVar] = {}
         color_keys = [
             "bg", "surface", "text", "muted_text", "border",
@@ -1089,8 +1165,7 @@ class SettingsPanel(BasePanel):
                 initial = v.get() or "#FFFFFF"
                 color = colorchooser.askcolor(initialcolor=initial, parent=self.winfo_toplevel())[1]
                 if color:
-                    v.set(color); self._apply_preview(
-             )
+                    v.set(color); self._apply_preview()
             ttk.Button(colors_frame, text="Pick…", command=pick).grid(row=r, column=2, sticky="w")
 
         for i, k in enumerate(color_keys):
@@ -1120,7 +1195,7 @@ class SettingsPanel(BasePanel):
             ttk.Label(wrap, text=label).grid(row=row, column=0, sticky="w")
             s = ttk.Scale(wrap, from_=0, to=24, orient="horizontal",
                           command=lambda _v=None: self._apply_preview(), variable=var)
-            s.grid(row=row, column=1, sticky="ew", padx=(6, 18))
+            s.grid(row=row, column=1, sticky="w", padx=(6, 18))
         slider(8,  "xs", self._sp_xs)
         slider(9,  "sm", self._sp_sm)
         slider(10, "md", self._sp_md)
@@ -1133,21 +1208,23 @@ class SettingsPanel(BasePanel):
         ttk.Spinbox(wrap, from_=16, to=40, textvariable=self._tree_row_h, width=6,
                     command=lambda: self._apply_preview()).grid(row=13, column=1, sticky="w", padx=(6, 18))
 
-        # live changes on field edits
+        # live preview on edits
         for v in list(self._color_vars.values()) + [self._font_base_family, self._font_mono_family]:
             v.trace_add("write", lambda *_: self._apply_preview())
 
-        # --- Preview area ---
-        preview = ttk.Frame(parent, padding=(8, 6), style="Card.TFrame")
-        preview.grid(row=2, column=0, sticky="nsew")
+        # --- Preview area (compact) ---
+        preview = ttk.Frame(body, padding=(8, 6), style="Card.TFrame")
+        preview.grid(row=2, column=0, sticky="ew")
         ttk.Label(preview, text="Preview area").grid(row=0, column=0, sticky="w")
         tv = ttk.Treeview(preview, columns=("a", "b"), show="headings", height=4)
         tv.heading("a", text="Column A"); tv.heading("b", text="Column B")
         tv.insert("", "end", values=("Foo", "Bar"))
-        tv.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
-        preview.grid_rowconfigure(1, weight=1)
+        tv.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         preview.grid_columnconfigure(0, weight=1)
         self._theme_preview_tree = tv
+
+        # give wrap a healthy natural width so horizontal always has something to scroll
+        #self.after(0, lambda: wrap.configure(width=max(wrap.winfo_reqwidth(), 1100)))
 
         # boot with active
         self._load_theme_into_editor(get_active_theme_name())
@@ -1213,7 +1290,7 @@ class SettingsPanel(BasePanel):
                 merged[k].update(self._collect_editor_spec().get(k, {}) or {})
 
             th = getattr(self.app, "theme", None) or make_theme_instance(active_name)
-            th.spec = merged                  # reuse instance → fewer flickers
+            th.spec = merged
             self.app.theme = th
             th.apply(self.app)
             self.set_status("Preview applied (not saved)")

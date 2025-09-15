@@ -1,4 +1,4 @@
-# path: panels/health_log_panel.py
+﻿# path: panels/health_log_panel.py
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -50,10 +50,8 @@ def bristol_label(n: int) -> str:
 def bristol_code(label: str) -> int:
     if not label:
         return 0
-    # label might be "4 – smooth..." or just "4"
     s = str(label).strip()
     try:
-        # if user typed a plain number
         return int(s.split("–", 1)[0].strip())
     except Exception:
         pass
@@ -118,7 +116,7 @@ class HealthLogPanel(BasePanel):
         ttk.Entry(addf, textvariable=self.var_time, width=8).grid(row=r, column=3, pady=4, sticky="w")
 
         ttk.Label(addf, text="Meal").grid(row=r, column=4, padx=(12,6), pady=4, sticky="e")
-        ttk.Combobox(addf, textvariable=self.var_meal, width=12, values=MEALS, state="readonly").grid(row=r, column=5, pady=4, sticky="w")
+        ttk.Combobox(addf, textvariable=self.var_meal, width=12, values=["Breakfast","Lunch","Dinner","Snack","Other"], state="readonly").grid(row=r, column=5, pady=4, sticky="w")
 
         ttk.Label(addf, text="Recipe (optional)").grid(row=r, column=6, padx=(12,6), pady=4, sticky="e")
         self.cb_recipe = ttk.Combobox(addf, textvariable=self.var_recipe, width=28, values=self._recipe_titles(), state="normal")
@@ -332,7 +330,7 @@ class HealthLogPanel(BasePanel):
                 r["risk"] or "", r["severity"] or "", r["stool"] or "",
                 r["recipe"] or "", r["symptoms"] or "", r["notes"] or ""
             ])
-        self.set_status(f"{len(rows)} entrie(s)")
+        self.set_status(f"{len(rows)} entrie(s)" if len(rows) == 1 else f"{len(rows)} entries")
 
     # ---------- Edit/Delete ----------
     def edit_selected(self) -> None:
@@ -370,7 +368,7 @@ class HealthLogPanel(BasePanel):
         self.db.execute(f"DELETE FROM health_log WHERE rowid IN ({q})", ids)
         self.db.commit()
         self.load_rows()
-        self.set_status(f"Deleted {len(ids)} entrie(s)")
+        self.set_status(f"Deleted {len(ids)} entries")
 
     # ---------- Export / copy ----------
     def export_html_visible(self) -> None:
@@ -388,7 +386,7 @@ class HealthLogPanel(BasePanel):
             meta={"Source":"Health Log","Rows":len(rows)},
             open_after=True,
         )
-        self.set_status(f"Exported {len(rows)} entrie(s) to HTML")
+        self.set_status(f"Exported {len(rows)} entries to HTML")
 
     def copy_visible_to_clipboard(self) -> None:
         tv = self._tree
@@ -411,7 +409,6 @@ class HealthLogPanel(BasePanel):
         frm = ttk.Frame(dlg, padding=8); frm.grid(row=0, column=0, sticky="nsew")
         dlg.grid_columnconfigure(0, weight=1); dlg.grid_rowconfigure(0, weight=1)
 
-        # keep descriptive label in the editor combo
         sv = {
             "date": tk.StringVar(value=row["date"] or ""),
             "time": tk.StringVar(value=row["time"] or ""),

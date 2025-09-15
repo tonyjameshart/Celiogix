@@ -60,6 +60,9 @@ COLS: List[Tuple[str, str, int, str]] = [
     ("notes",       "Notes",       220, "w"),
 ]
 
+# Columns eligible to stretch when Auto-fit is ON
+STRETCHABLE = {"name", "brand", "notes", "tags"}
+
 class PantryPanel(BasePanel):
     """Pantry with Category→Subcategory filtering, search, GF auto-tagging, UPC import, alphabetical listing, and category cleanup."""
     def __init__(self, master, app, **kw):
@@ -68,6 +71,7 @@ class PantryPanel(BasePanel):
         self._search_var: Optional[tk.StringVar] = None
         self._current_cat: Optional[str] = None
         self._current_sub: Optional[str] = None
+        self._autofit_var: Optional[tk.BooleanVar] = None
         super().__init__(master, app, **kw)
 
     # ---------------- UPC resolver ----------------
@@ -129,7 +133,7 @@ class PantryPanel(BasePanel):
         note_upc = f"UPC:{upc}"
         notes = note_upc if not notes else (notes if note_upc in notes else (notes + f"; {note_upc}"))
 
-        if data.get("gf") is True or str(data.get("gf_flag","")).upper() == "GF":
+        if data.get("gf") is True or str(data.get("gf_flag","")) .upper() == "GF":
             if "GF" not in [t.strip().upper() for t in re.split(r"[;,]\s*|\s+", tags) if t.strip()]:
                 tags = (tags + "; GF").strip("; ").strip()
 
@@ -163,7 +167,7 @@ class PantryPanel(BasePanel):
         # Right: search + table
         right = ttk.Frame(self, padding=(0,0))
         right.grid(row=1, column=1, sticky="nsew")
-        right.grid_rowconfigure(1, weight=1)
+        right.grid_rowconfigure(2, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
         sbar, svar, _ = self.build_search_bar(
@@ -174,24 +178,29 @@ class PantryPanel(BasePanel):
         self._search_var = svar
         sbar.grid(row=0, column=0, sticky="ew")
 
-        table_wrap = ttk.Frame(right)
-        table_wrap.grid(row=1, column=0, sticky="nsew")
-        table_wrap.grid_rowconfigure(0, weight=1)
-        table_wrap.grid_columnconfigure(0, weight=1)
+        # Auto-fit toggle
+        self._autofit_var = tk.BooleanVar(value=False)
+        chk = ttk.Checkbutton(right, text="Auto-fit columns", variable=self._autofit_var, command=self._apply_autofit)
+        chk.grid(row=1, column=0, sticky="w", padx=(4,0), pady=(0,4))
 
-        self._tree = ttk.Treeview(table_wrap, columns=[c[0] for c in COLS], show="headings", selectmode="extended")
-        self._tree.grid(row=0, column=0, sticky="nsew")
+        # Treeview via shared builder (resizes with window)
+        self._tree = self.make_treeview(
+            parent=right,
+            columns=COLS,
+            selectmode="extended",
+            show_headings=True,
+            bind_double_click=True,
+            tree_key="tree",
+        )
+        # place created frame in row 2
+        frame = self._widgets.get("tree_frame")
+        if isinstance(frame, ttk.Frame):
+            frame.grid(row=2, column=0, sticky="nsew")
+            right.grid_rowconfigure(2, weight=1)
+            right.grid_columnconfigure(0, weight=1)
 
-        for key, hdr, width, anchor in COLS:
-            self._tree.heading(key, text=hdr)
-            anc = {"w":"w", "e":"e", "c":"center"}.get(anchor, "w")
-            self._tree.column(key, width=width, anchor=anc, stretch=True)
-
-        vsb = ttk.Scrollbar(table_wrap, orient="vertical", command=self._tree.yview)
-        hsb = ttk.Scrollbar(table_wrap, orient="horizontal", command=self._tree.xview)
-        self._tree.configure(yscroll=vsb.set, xscroll=hsb.set)
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
+        # Start with fixed-width columns (no stretch)
+        self._apply_autofit()
 
         # Context menu
         menu = tk.Menu(self, tearoff=0)
@@ -213,6 +222,28 @@ class PantryPanel(BasePanel):
         # Load
         self.refresh_groups()
         self.refresh_list()
+
+    # ---------------- Auto-fit application ----------------
+    def _apply_autofit(self) -> None:
+        """Switch column stretching on/off based on the checkbox state."""
+        tv = self._tree
+        if not isinstance(tv, ttk.Treeview):
+            return
+        on = bool(self._autofit_var.get()) if isinstance(self._autofit_var, tk.BooleanVar) else False
+        cols = tv.cget("columns")
+        for c in cols:
+            try:
+                tv.column(c, stretch=(on and c in STRETCHABLE))
+            except Exception:
+                pass
+        # When turning off auto-fit, ensure H-scroll can show overflow
+        if not on:
+            try:
+                for c in cols:
+                    w = int(tv.column(c, "width"))
+                    tv.column(c, width=w)
+            except Exception:
+                pass
 
     # ---------------- Data refresh ----------------
     def _filters(self) -> Tuple[Optional[str], Optional[str], str]:
@@ -247,9 +278,7 @@ class PantryPanel(BasePanel):
             n = int(r["n"] or 0)
             total += n
             subtotal[cat] = subtotal.get(cat, 0) + n
-            key = (cat, sub)
-            if key not in cats:
-                cats[key] = ""  # placeholder
+            cats[(cat, sub)] = ""
 
         # Insert categories first
         cat_ids: Dict[str, str] = {}
@@ -259,7 +288,6 @@ class PantryPanel(BasePanel):
             tv.insert(root, "end", iid=cid, text=f"{cat} ({subtotal.get(cat,0)})", open=False)
 
         # Insert subcategories
-        # We need counts per (cat, sub) again
         counts: Dict[Tuple[str,str], int] = {}
         for r in rows:
             cat = canonical_category(r["cat"])
@@ -395,7 +423,7 @@ class PantryPanel(BasePanel):
         if len(sel) != 1:
             messagebox.showinfo("Pantry", "Select one item to edit.", parent=self.winfo_toplevel()); return
         rid = int(sel[0])
-        row = self.db.execute("SELECT * FROM pantry WHERE id=?", (rid,)).fetchone()
+        row = self.db.execute("SELECT * FROM pantry WHERE id= ?", (rid,)).fetchone()
         if not row: return
         data = self._edit_dialog(row)
         if not data: return

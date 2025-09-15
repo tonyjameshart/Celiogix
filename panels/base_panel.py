@@ -1,4 +1,4 @@
-﻿# panels/base_panel.py
+﻿# path: panels/base_panel.py
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -22,6 +22,7 @@ class BasePanel(tk.Frame):
     Common panel base with shared UI builders:
       - build_search_bar(): compact 'Search' label + Entry + optional refresh button
       - make_treeview(): standardized Treeview with scrollbars and column setup
+      - freeze_treeview_size(): lock a Treeview to a fixed size (no window-resize effects)
       - bind_edit_on_double_click(): wire double-click to edit_selected() (or a handler)
       - confirm_delete(): Yes/No helper for bulk delete prompts
       - set_status(): proxy to app.set_status
@@ -41,7 +42,9 @@ class BasePanel(tk.Frame):
                 # stash back on app so other panels share it
                 setattr(self.app, "theme", self.theme)
                 # apply to the toplevel immediately
-                self.theme.apply(self.winfo_toplevel())
+                top = self.winfo_toplevel()
+                if top:
+                    self.theme.apply(top)
             except Exception:
                 # Don’t crash panels if theming isn’t ready
                 pass
@@ -53,7 +56,38 @@ class BasePanel(tk.Frame):
     def build(self) -> None:  # to be overridden by subclasses
         pass
 
-    # ---------- messaging ----------
+    # ---------- messaging (safe wrappers that don't collide with Tk pack_info) ----------
+    def info(self, msg: str) -> None:
+        """Show an informational message and touch status line if available."""
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        try:
+            messagebox.showinfo("Info", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
+
+    def warn(self, msg: str) -> None:
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        try:
+            messagebox.showwarning("Warning", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
+
+    def error(self, msg: str) -> None:
+        try:
+            self.set_status(msg)
+        except Exception:
+            pass
+        try:
+            messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
+        except Exception:
+            pass
+
     def show_info(self, title, message):
         messagebox.showinfo(title, message, parent=self.winfo_toplevel())
 
@@ -222,7 +256,6 @@ class BasePanel(tk.Frame):
             parent.grid_columnconfigure(c, weight=0)
         except Exception:
             pass
-
 
     def bind_edit_on_double_click(self, tv: ttk.Treeview, handler: Optional[Callable[[], None]] = None) -> None:
         """

@@ -1,0 +1,25 @@
+{
+  "name": "neumorphic_grace",
+  "colors": {
+    "bg": "#E0E0E0",
+    "surface": "#F5F5F5",
+    "text": "#3A3A3A",
+    "muted_text": "#6E6E6E",
+    "border": "#CCCCCC",
+    "accent": "#A0C4FF",
+    "accent_fg": "#ffffff",
+    "warning": "#FFB347",
+    "danger": "#FF6961",
+    "zebra_even": "#E8E8E8",
+    "zebra_odd": "#DCDCDC",
+    "low_bg": "#C0C0C0",
+    "low_fg": "#A9A9A9"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "light_alt",
+  "colors": {
+    "bg": "#FAF9F6",
+    "surface": "#FFFFFF",
+    "text": "#333333",
+    "muted_text": "#666666",
+    "border": "#CCCCCC",
+    "accent": "#A3B18A",
+    "accent_fg": "#ffffff",
+    "warning": "#FFD700",
+    "danger": "#CC0000",
+    "zebra_even": "#F0F0F0",
+    "zebra_odd": "#E8E8E8",
+    "low_bg": "#DDDDDD",
+    "low_fg": "#BBBBBB"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}
