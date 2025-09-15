@@ -1,21 +1,29 @@
-# path: app.py
+# path: app.py (fixed)
 from __future__ import annotations
+
+import logging
+import sqlite3
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, List, Tuple, Optional
-import sqlite3
+
+from utils.logger import init_logging
+LOG_PATH = init_logging()
 
 from utils.db import get_connection
 from utils.migrations import ensure_schema
+from utils.factory_reset import factory_reset
+from panels.settings_panel import SettingsPanel  # ensure Settings is available for the modal
 
 # Label, module path, class name
 PANEL_BUILDERS: List[Tuple[str, str, str]] = [
     ("Pantry",       "panels.pantry_panel",        "PantryPanel"),
-    ("Cookbook",     "panels.cookbook_panel",      "CookbookPanel"),  # <- ensure this line exists
+    ("Cookbook",     "panels.cookbook_panel",      "CookbookPanel"),
     ("Shopping",     "panels.shopping_list_panel", "ShoppingListPanel"),
     ("Health Log",   "panels.health_log_panel",    "HealthLogPanel"),
     ("Menu",         "panels.menu_panel",          "MenuPanel"),
-    ("Settings",     "panels.settings_panel",      "SettingsPanel"),
+    ("Calendar",     "panels.calendar_panel",      "CalendarPanel"),
 ]
 
 
@@ -26,8 +34,11 @@ class _SimpleTheme:
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Celiac Culinary")
+        self.title("Celiogix")
         self.minsize(980, 620)
+
+        # --- Logging
+        self.logger = logging.getLogger("Celiogix.App")
 
         # --- SQLite: open + migrate
         self.db: sqlite3.Connection = get_connection()
@@ -42,6 +53,18 @@ class App(tk.Tk):
             pass
         st.configure("Card.TFrame", relief="flat")
         st.configure("Muted.TLabel", foreground="#666666")
+
+        # --- menubar (Tools → Settings…, Factory Reset…)
+        self._settings_win: Optional[tk.Toplevel] = None  # single-instance tracker
+        menubar = tk.Menu(self)
+        tools = tk.Menu(menubar, tearoff=0)
+        tools.add_command(label="Settings…", command=self._open_settings_dialog, accelerator="Ctrl+,")
+        tools.add_separator()
+        tools.add_command(label="Factory Reset…", command=self._factory_reset_dialog)
+        menubar.add_cascade(label="Tools", menu=tools)
+        self.config(menu=menubar)
+        self._menubar = menubar
+        self.bind_all("<Control-comma>", lambda e: self._open_settings_dialog())
 
         # --- layout
         root = ttk.Frame(self, padding=(8, 8))
@@ -73,7 +96,7 @@ class App(tk.Tk):
         self._current_key: Optional[str] = None
 
         # --- nav buttons (always create)
-        for i, (label, _spec) in enumerate(self._panel_specs.items()):
+        for i, (label, _spec) in enumerate(self._panel_specs.items()):  # noqa: B007
             ttk.Button(self.nav, text=label, width=20, command=lambda k=label: self.show_panel(k)).grid(
                 row=i, column=0, sticky="ew", pady=(0, 6)
             )
@@ -92,6 +115,7 @@ class App(tk.Tk):
     # --------- window close ----------
     def _on_close(self) -> None:
         try:
+            # Graceful close if needed (e.g., flushing logs/DB)
             pass
         finally:
             self.destroy()
@@ -171,7 +195,82 @@ class App(tk.Tk):
             add("Export CSV", ["export_csv"])
         elif key == "Menu":
             add("Add", ["add_item", "add"])
-            add("Edit", ["edit_selected", "edit"])
-            add("Delete", ["delete_selected", "delete"])
             add("Generate Shopping List", ["generate_shopping_list"])
-        # Settings: all controls live inside the panel
+        # Settings: live inside modal dialog
+
+    # ---------- Tools: Factory Reset ----------
+    def _factory_reset_dialog(self):
+        msg = (
+            "Factory Reset will:\n"
+            "• Backup your database to the backups/ folder\n"
+            "• Delete the database (app.db, -wal, -shm)\n"
+            "• Keep logs and exports (you can wipe them too)\n\n"
+            "Proceed?"
+        )
+        if not messagebox.askyesno("Factory Reset", msg, icon="warning", default="no"):
+            return
+
+        # Optional extra wipe prompt
+        wipe_more = messagebox.askyesno(
+            "Reset Options",
+            "Also wipe logs and exports? (Backed up first)",
+            icon="question",
+            default="no",
+        )
+
+        try:
+            backup_zip = factory_reset(
+                self.db,
+                project_root=Path(__file__).resolve().parents[0],  # adjust if your app root differs
+                backup=True,
+                wipe_logs=wipe_more,
+                wipe_exports=wipe_more,
+                logger=getattr(self, "logger", None),
+                restart_after=True,
+            )
+            # If auto-restart works, we won't reach here.
+            messagebox.showinfo(
+                "Factory Reset complete",
+                f"Backup saved to:\n{backup_zip}\n\nPlease restart the app.",
+            )
+        except Exception as e:
+            # If something blocks deletion, show details and capture in log
+            if getattr(self, "logger", None):
+                self.logger.exception("Factory Reset failed: %s", e)
+            messagebox.showerror("Factory Reset failed", str(e))
+
+    # ---------- Tools: Settings (modal) ----------
+    def _open_settings_dialog(self):
+        # Reuse if already open
+        if self._settings_win and self._settings_win.winfo_exists():
+            self._settings_win.lift()
+            self._settings_win.focus_force()
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Settings")
+        win.transient(self)
+        win.grab_set()               # modal
+        win.resizable(False, False)
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+
+        # Container for the panel
+        wrap = ttk.Frame(win, padding=8)
+        wrap.pack(fill="both", expand=True)
+
+        # Mount the existing SettingsPanel (unchanged)
+        panel = SettingsPanel(wrap, self)  # BasePanel subclass; master=wrap, app=self
+        try:
+            panel.pack(fill="both", expand=True)  # works because BasePanel is a Frame
+        except Exception:
+            # If your BasePanel uses grid internally, this still works since we're packing the outer Frame.
+            pass
+
+        # Keep a handle to avoid multiple windows
+        self._settings_win = win
+
+        # Center roughly on parent
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (win.winfo_reqwidth() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (win.winfo_reqheight() // 2)
+        win.geometry(f"+{max(0,x)}+{max(0,y)}")

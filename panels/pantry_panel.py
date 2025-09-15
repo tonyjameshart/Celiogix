@@ -145,7 +145,6 @@ class PantryPanel(BasePanel):
     def build(self) -> None:
         # top toolbar
         bar = ttk.Frame(self); bar.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,6))
-        ttk.Button(bar, text="Add", command=self.add_item).pack(side="left")
         ttk.Button(bar, text="Add by UPC", command=self.add_by_upc).pack(side="left", padx=(6,0))
         ttk.Button(bar, text="Clean Categories", command=self.clean_categories).pack(side="left", padx=(12,0))
 

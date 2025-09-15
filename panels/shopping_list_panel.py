@@ -33,7 +33,6 @@ class ShoppingListPanel(BasePanel):
         # Top bar
         bar = ttk.Frame(self)
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Button(bar, text="Add", command=self.add_item).pack(side="left")
         ttk.Button(bar, text="Delete", command=self.delete_selected).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="Import to Pantry (↑ qty) & Remove", command=self.import_to_pantry_selected).pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Export HTML (visible)", command=self.export_html_visible).pack(side="left", padx=(12, 0))

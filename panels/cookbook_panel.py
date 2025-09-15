@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox, simpledialog
 from typing import Optional, List, Tuple
 
 from panels.base_panel import BasePanel
-from utils.export import export_table_html
+from utils.export import export_table_html, export_recipes_html
 
 # Visible columns in lists (prepended with Favorite)
 LIB_COLS: List[Tuple[str, str, int, str]] = [
@@ -70,6 +70,7 @@ class CookbookPanel(BasePanel):
         ttk.Button(top, text="Edit", command=self.edit_selected).pack(side="left", padx=(6,0))
         ttk.Button(top, text="Delete", command=self.delete_selected).pack(side="left", padx=(6,0))
         ttk.Button(top, text="Export HTML", command=self.export_html_visible).pack(side="left", padx=(12,0))
+        ttk.Button(top, text="Print Recipe", command=self.export_html_recipe_selected).pack(side="left", padx=(8,0))
         ttk.Button(top, text="Add to Menu", command=self.add_selected_to_menu).pack(side="left", padx=(12,0))
         ttk.Button(top, text="♥ Favorite", command=self.toggle_favorite_selected).pack(side="left", padx=(12,0))
         self._fav_only = tk.BooleanVar(value=False)
@@ -111,6 +112,7 @@ class CookbookPanel(BasePanel):
         ttk.Button(top2, text="Edit", command=self.edit_selected).pack(side="left")
         ttk.Button(top2, text="Delete", command=self.delete_selected).pack(side="left", padx=(6,0))
         ttk.Button(top2, text="Export HTML", command=self.export_html_visible).pack(side="left", padx=(12,0))
+        ttk.Button(top2, text="Print Recipe", command=self.export_html_recipe_selected).pack(side="left", padx=(8,0))
         ttk.Button(top2, text="Remove ♥", command=self.toggle_favorite_selected).pack(side="left", padx=(12,0))
         ttk.Checkbutton(top2, text="♥ first", variable=self._fav_first, command=self._refresh_both).pack(side="left", padx=(6,0))
 
@@ -153,6 +155,7 @@ class CookbookPanel(BasePanel):
         m.add_separator()
         m.add_command(label="Toggle Favorite", command=self.toggle_favorite_selected)
         m.add_command(label="Export HTML (visible)", command=self.export_html_visible)
+        m.add_command(label="Print Recipe (HTML)", command=self.export_html_recipe_selected)
         return m
 
     # ---------- Helpers ----------
@@ -481,3 +484,36 @@ class CookbookPanel(BasePanel):
         ttk.Button(btns, text="Save", command=on_save).grid(row=0, column=1)
         dlg.wait_window()
         return out or None
+
+    def export_html_recipe_selected(self) -> None:
+        """Export the selected recipe(s) as printable HTML and open in browser."""
+        tv = self._current_tree()
+        if not isinstance(tv, ttk.Treeview):
+            return
+        sel = tv.selection()
+        if not sel:
+            messagebox.showinfo("Print Recipe", "Select at least one recipe in the list.")
+            return
+        ids = [int(s) for s in sel if str(s).isdigit()]
+        if not ids:
+            messagebox.showinfo("Print Recipe", "No valid recipe selected.")
+            return
+        # Fetch full recipe details
+        qs = ",".join("?" for _ in ids)
+        rows = self.db.execute(f"""            SELECT title, source, url, tags, ingredients, instructions,
+                   IFNULL(rating,0.0) AS rating,
+                   COALESCE(prep_time,'') AS prep_time,
+                   COALESCE(cook_time,'') AS cook_time,
+                   COALESCE(servings,0)   AS servings
+              FROM recipes WHERE id IN ({qs})
+             ORDER BY LOWER(title)
+        """, ids).fetchall()
+        # Convert sqlite Row objects to dicts
+        recipes = [dict(r) for r in rows]
+        export_recipes_html(
+            recipes,
+            title = "Recipe" if len(recipes)==1 else "Recipes",
+            subtitle = "Printable view",
+            meta = {"Count": len(recipes)},
+            open_after = True,
+        )

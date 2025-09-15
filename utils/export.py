@@ -138,3 +138,107 @@ def export_table_html(
     if open_after:
         _open_file(path)
     return path
+
+# ---------- Printable Recipe Export ----------
+
+_RECIPE_CSS = _BASE_CSS + """
+.recipe{border:1px solid var(--border); border-radius:10px; padding:16px; margin:16px 0; background:#fff}
+.recipe h3{font-size:18px; margin:0 0 8px 0}
+.recipe .meta{margin:6px 0 12px 0}
+.recipe .section{margin-top:10px}
+.recipe .section h4{font-size:14px; margin:0 0 6px 0; color:var(--muted)}
+.recipe .grid{display:grid; grid-template-columns: 1fr 1fr; gap:14px}
+.recipe ul{margin:6px 0 0 18px}
+.recipe pre{background:var(--surface); border:1px solid var(--border); padding:10px; border-radius:8px; white-space:pre-wrap}
+@media print{
+  .meta .kv{display:none}
+  .recipe{page-break-inside: avoid}
+}
+"""
+
+def _fmt_if(v: Any, label: str) -> str:
+    v = (v or "").strip()
+    return f"<div class='kv'><strong>{_e(label)}:</strong> {_e(v)}</div>" if v else ""
+
+def render_recipes_html(title: str, recipes: Sequence[Mapping[str, Any]], *, subtitle: Optional[str]=None, meta: Optional[Mapping[str, Any]]=None) -> str:
+    head = f"""<!doctype html>
+<html><head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>{_e(title or 'Recipes')}</title>
+<style>{_RECIPE_CSS}</style>
+</head>
+<body>
+  <h1>{_e(title or 'Recipes')}</h1>
+  {f"<h2>{_e(subtitle)}</h2>" if subtitle else ""}
+  <div class='meta'>
+    <div class='kv'>Generated: {_e(_now_iso())}</div>
+    {''.join(f"<div class='kv'><strong>{_e(str(k))}:</strong> {_e(str(v))}</div>" for k,v in (meta or {}).items())}
+  </div>
+"""
+
+    blocks: List[str] = []
+    for r in recipes:
+        title = str(r.get('title','') or 'Untitled')
+        source = r.get('source','') or ''
+        url = (r.get('url','') or '').strip()
+        tags = r.get('tags','') or ''
+        rating = r.get('rating','') or ''
+        prep = r.get('prep_time','') or ''
+        cook = r.get('cook_time','') or ''
+        servings = r.get('servings','') or ''
+        ingredients = r.get('ingredients','') or ''
+        instructions = r.get('instructions','') or ''
+
+        # prefer bullet list when ingredients look like lines
+        ing_block = ""
+        if ingredients.strip():
+            # split lines, keep non-empty
+            lines = [ln.strip() for ln in ingredients.replace('\r','').split('\n') if ln.strip()]
+            if lines and len(lines) <= 1:
+                ing_block = f"<pre>{_e(ingredients)}</pre>"
+            else:
+                items = ''.join(f"<li>{_e(ln)}</li>" for ln in lines)
+                ing_block = f"<ul>{items}</ul>"
+
+        inst_block = f"<pre>{_e(instructions)}</pre>" if instructions.strip() else ""
+        url_block = f"<a href='{_e(url)}' target='_blank' rel='noopener'>{_e(url)}</a>" if url else ""
+
+        block = f"""<article class='recipe'>
+  <h3>{_e(title)}</h3>
+  <div class='meta'>
+    {_fmt_if(source, 'Source')}
+    {f"<div class='kv'><strong>URL:</strong> {url_block}</div>" if url else ''}
+    {_fmt_if(tags, 'Tags')}
+    {_fmt_if(str(rating), 'Rating')}
+    {_fmt_if(prep, 'Prep')}{_fmt_if(cook, 'Cook')}{_fmt_if(str(servings), 'Servings')}
+  </div>
+  <div class='grid'>
+    <div class='section'>
+      <h4>Ingredients</h4>
+      {ing_block or '<div class="small">No ingredients entered.</div>'}
+    </div>
+    <div class='section'>
+      <h4>Instructions</h4>
+      {inst_block or '<div class="small">No instructions entered.</div>'}
+    </div>
+  </div>
+</article>"""
+        blocks.append(block)
+
+    body = "\n\n".join(blocks)
+    return head + body + "\n</body></html>"
+
+def export_recipes_html(recipes: Sequence[Mapping[str, Any]], *, path: Optional[Path|str]=None, title: str='Recipes', subtitle: Optional[str]=None, meta: Optional[Mapping[str, Any]]=None, open_after: bool=True) -> Path:
+    if path is None or str(path).strip()=="":
+        safe = "".join(ch if ch.isalnum() or ch in ("-","_") else "-" for ch in (title or 'recipes'))
+        ts = _dt.now().strftime("%Y%m%d-%H%M%S")
+        path = Path("export") / f"{safe}-{ts}.html"
+    else:
+        path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    html = render_recipes_html(title, recipes, subtitle=subtitle, meta=meta)
+    path.write_text(html, encoding='utf-8')
+    if open_after:
+        _open_file(path)
+    return path
