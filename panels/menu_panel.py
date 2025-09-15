@@ -138,6 +138,7 @@ class MenuPanel(BasePanel):
         self._menu_hsb: Optional[ttk.Scrollbar] = None
         self._rec_hsb: Optional[ttk.Scrollbar] = None
         self._scroller: Optional[ScrollFrame] = None
+        self._fit_job: Optional[str] = None
         self._right_nb: Optional[ttk.Notebook] = None
         super().__init__(master, app, **kw)
 
@@ -270,8 +271,11 @@ class MenuPanel(BasePanel):
         tvm.bind("<Button-3>", popm)
         tvm.bind("<Double-1>", lambda _e: self.edit_selected())
 
+        # Ensure we recompute fit once data is loaded; done async so geometry settles
         self.refresh_recipes()
         self.refresh_menu()
+        self.bind("<Visibility>", lambda _e: self._schedule_fit_check())
+        self._schedule_fit_check()
 
     # ---------- Data ----------
     def refresh_recipes(self) -> None:
@@ -303,6 +307,7 @@ class MenuPanel(BasePanel):
                     r["servings"] or 0,
                 ],
             )
+        self._schedule_fit_check()
 
     def refresh_menu(self) -> None:
         tv = self._tree_menu
@@ -337,6 +342,7 @@ class MenuPanel(BasePanel):
                     r["notes"] or "",
                 ],
             )
+        self._schedule_fit_check()
     # ---------- Helpers (DB) ----------
     def _row_to_dict(self, cursor, row):
         """Convert a sqlite row to dict using cursor.description; robust to default row_factory.
@@ -643,6 +649,7 @@ class MenuPanel(BasePanel):
         # when panel becomes visible, restore position and re-evaluate scrollbars
         self.after(0, self._restore_scroll)
         self.after(0, self._update_scrollbars)
+        self._schedule_fit_check()
 
     def _update_scrollbars(self) -> None:
         """Auto-hide outer H-bar if content fits; show per-tree H-bars as fallback.
@@ -706,3 +713,53 @@ class MenuPanel(BasePanel):
             return
         sc.canvas.xview_moveto(max(0.0, min(1.0, pos)))
         self._save_scroll()
+
+    # ---------- sizing helpers ----------
+    def _schedule_fit_check(self, delay: int = 120, retries: int = 3) -> None:
+        """Throttle geometry checks so panel opens wide enough for its content."""
+        try:
+            job = self._fit_job
+            if job:
+                self.after_cancel(job)
+        except Exception:
+            pass
+
+        def _runner() -> None:
+            self._fit_job = None
+            self._ensure_window_width(retries=retries)
+
+        self._fit_job = self.after(delay, _runner)
+
+    def _ensure_window_width(self, retries: int = 3) -> None:
+        sc = self._scroller
+        if sc is None:
+            return
+        top = self.winfo_toplevel()
+        if not isinstance(top, tk.Misc):
+            return
+        try:
+            sc.update_idletasks()
+            sc.content.update_idletasks()
+            top.update_idletasks()
+
+            window_width = top.winfo_width()
+            scroller_width = max(sc.winfo_width(), sc.winfo_reqwidth())
+            content_width = sc.content.winfo_reqwidth()
+
+            if (window_width <= 1 or scroller_width <= 1 or content_width <= 1) and retries > 0:
+                self._schedule_fit_check(delay=160, retries=retries - 1)
+                return
+
+            extra = max(0, window_width - scroller_width)
+            target_width = int(content_width + extra)
+
+            if target_width > window_width:
+                current_height = top.winfo_height()
+                if current_height <= 1:
+                    current_height = max(top.winfo_reqheight(), 1)
+                top.geometry(f"{target_width}x{current_height}")
+                top.update_idletasks()
+                self.after(0, self._update_scrollbars)
+        except Exception:
+            if retries > 0:
+                self._schedule_fit_check(delay=200, retries=retries - 1)

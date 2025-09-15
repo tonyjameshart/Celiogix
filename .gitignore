@@ -208,3 +208,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.vs/Celiogix/v17/.wsuo
+.vs/VSWorkspaceState.json
+.vs/Celiogix/v17/.wsuo
