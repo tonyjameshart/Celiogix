@@ -1,9 +1,12 @@
+# panels/menu_panel.py
+
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Optional, List, Tuple
 import datetime
 import calendar
+import sqlite3
 
 from panels.base_panel import BasePanel
 from utils.export import export_table_html, export_recipes_html
@@ -12,6 +15,7 @@ from utils.scroll import ScrollFrame  # horizontal/vertical panel scrolling
 # ------------------------- Tiny modal date picker -------------------------
 class _DatePickerDialog(tk.Toplevel):
     """Modal mini-calendar that returns ISO date (YYYY-MM-DD) via .result."""
+
     def __init__(self, parent: tk.Misc, initial: Optional[datetime.date] = None, title: str = "Choose Date"):
         super().__init__(parent)
         self.title(title)
@@ -124,9 +128,10 @@ MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Other"]
 
 
 class MenuPanel(BasePanel):
-    \"\"\"Notebook with two tabs: Menu (default) and Recipes.
+    """Notebook with two tabs: Menu (default) and Recipes.
     Wrapped in ScrollFrame so the whole panel can pan horizontally when content is wider than the viewport.
-    \"\"\"
+    """
+
     def __init__(self, master, app, **kw):
         self._tree_menu: Optional[ttk.Treeview] = None
         self._tree_rec: Optional[ttk.Treeview] = None
@@ -332,6 +337,74 @@ class MenuPanel(BasePanel):
                     r["notes"] or "",
                 ],
             )
+    # ---------- Helpers (DB) ----------
+    def _row_to_dict(self, cursor, row):
+        """Convert a sqlite row to dict using cursor.description; robust to default row_factory.
+        Only comment on the why: avoid depending on connection row_factory.
+        """
+        if row is None:
+            return {}
+        try:
+            keys = [d[0] for d in cursor.description]
+            return {k: row[i] for i, k in enumerate(keys)}
+        except Exception:
+            try:
+                return dict(row)
+            except Exception:
+                fields = [
+                    "id",
+                    "title",
+                    "source",
+                    "ingredients",
+                    "instructions",
+                    "prep_time",
+                    "cook_time",
+                    "servings",
+                    "notes",
+                ]
+                return {f: getattr(row, f, "" if f != "servings" else 0) for f in fields}
+
+    def _fetch_recipe_as_dict(self, rid: int):
+        """Fetch recipe by id, tolerating schema drift (missing optional columns).
+        Avoids OperationalError by introspecting columns and selecting only those available.
+        """
+        cur = self.db.cursor()
+        try:
+            info = cur.execute("PRAGMA table_info(recipes)").fetchall()
+            names = set()
+            for ci in info or []:
+                try:
+                    # sqlite3.Row or tuple
+                    name = ci["name"] if isinstance(ci, dict) else ci[1]
+                except Exception:
+                    name = getattr(ci, "name", None) or (ci[1] if isinstance(ci, (list, tuple)) and len(ci) > 1 else None)
+                if name:
+                    names.add(name)
+        except Exception:
+            names = set()
+
+        select = ["id", "title", "source", "ingredients", "instructions"]
+        if "prep_time" in names:
+            select.append("COALESCE(prep_time,'') AS prep_time")
+        if "cook_time" in names:
+            select.append("COALESCE(cook_time,'') AS cook_time")
+        if "servings" in names:
+            select.append("COALESCE(servings,0) AS servings")
+        if "notes" in names:
+            select.append("COALESCE(notes,'') AS notes")
+
+        q = f"SELECT {', '.join(select)} FROM recipes WHERE id = ?"
+        cur.execute(q, (rid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        rec = self._row_to_dict(cur, row)
+        # fill defaults if some optional columns are absent
+        rec.setdefault("prep_time", "")
+        rec.setdefault("cook_time", "")
+        rec.setdefault("servings", 0)
+        rec.setdefault("notes", "")
+        return rec
 
     # ---------- Actions ----------
     def add_from_selection(self) -> None:
@@ -496,29 +569,42 @@ class MenuPanel(BasePanel):
         cookbook_panel = self._find_cookbook_panel()
         recipe = None
         if cookbook_panel is not None:
-            recipe = cookbook_panel.get_recipe_by_id(rid)
+            get_fn = getattr(cookbook_panel, "get_recipe_by_id", None)
+            if callable(get_fn):
+                try:
+                    recipe = get_fn(rid)
+                except Exception:
+                    recipe = None
 
-        # Fallback: query DB directly if the cookbook panel isn't available
+        # Fallback: query DB directly if we couldn't get it from the panel
         if recipe is None:
-            recipe = self.db.execute(
-                """
-                SELECT
-                    id, title, source, ingredients, instructions,
-                    COALESCE(prep_time, '') AS prep_time,
-                    COALESCE(cook_time, '') AS cook_time,
-                    COALESCE(servings, 0)  AS servings,
-                    COALESCE(notes, '')    AS notes
-                FROM recipes
-                WHERE id = ?
-                """,
-                (rid,),
-            ).fetchone()
+            try:
+                recipe = self._fetch_recipe_as_dict(rid)
+            except Exception:
+                recipe = None
             if not recipe:
                 messagebox.showerror("Error", "Recipe not found.", parent=self.winfo_toplevel())
                 return
 
-        # Convert sqlite3.Row to dict for export
-        recipe_dict = dict(recipe)
+        # Normalize to dict for export
+        if isinstance(recipe, dict):
+            recipe_dict = recipe
+        else:
+            try:
+                recipe_dict = dict(recipe)
+            except Exception:
+                # last-resort coercion from attributes
+                recipe_dict = {
+                    "id": getattr(recipe, "id", rid),
+                    "title": getattr(recipe, "title", "Recipe"),
+                    "source": getattr(recipe, "source", ""),
+                    "ingredients": getattr(recipe, "ingredients", ""),
+                    "instructions": getattr(recipe, "instructions", ""),
+                    "prep_time": getattr(recipe, "prep_time", ""),
+                    "cook_time": getattr(recipe, "cook_time", ""),
+                    "servings": getattr(recipe, "servings", 0),
+                    "notes": getattr(recipe, "notes", ""),
+                }
         export_recipes_html(
             recipes=[recipe_dict],
             title=recipe_dict.get("title", "Recipe"),
@@ -528,7 +614,7 @@ class MenuPanel(BasePanel):
 
     # ---------- Scroll persistence ----------
     def _save_scroll(self) -> None:
-        \"\"\"Persist horizontal scroll position into app._ui_state.\"\"\"
+        """Persist horizontal scroll position into app._ui_state."""
         try:
             sc = self._scroller
             if not sc:
@@ -559,8 +645,8 @@ class MenuPanel(BasePanel):
         self.after(0, self._update_scrollbars)
 
     def _update_scrollbars(self) -> None:
-        \"\"\"Auto-hide outer H-bar if content fits; show per-tree H-bars as fallback.
-        Also wires hotkeys for horizontal navigation.\"\"\"
+        """Auto-hide outer H-bar if content fits; show per-tree H-bars as fallback.
+        Also wires hotkeys for horizontal navigation."""
         sc = self._scroller
         if not sc:
             return
