@@ -1,4 +1,4 @@
-# utils/db_utils.py
+﻿    # utils/db_utils.py
 from __future__ import annotations
 import re, sqlite3
 from typing import Sequence, List, Tuple
@@ -34,3 +34,11 @@ def delete_with_dependents(conn: sqlite3.Connection, parent_table: str, parent_i
             conn.execute(f"DELETE FROM {child_table} WHERE {child_fk_col} IN ({qs})", ids)
         cur = conn.execute(f"DELETE FROM {parent_table} WHERE {parent_id_col} IN ({qs})", ids)
         return cur.rowcount if cur.rowcount is not None else conn.execute("SELECT changes()").fetchone()[0]
+
+def fetch_all(db, query, params=()):
+    try:
+        return db.execute(query, params).fetchall()
+    except Exception as e:
+        # Use your logger here
+        print(f"DB error: {e}")
+        return []

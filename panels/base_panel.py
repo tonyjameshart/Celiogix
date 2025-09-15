@@ -1,5 +1,4 @@
-# path: panels/base_panel.py
-from __future__ import annotations
+﻿from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Iterable, List, Tuple, Optional, Any, Dict
@@ -9,7 +8,7 @@ ColumnDef = Tuple[str, str, int, str]
 
 _ANCHOR = {"w": tk.W, "e": tk.E, "c": tk.CENTER}
 
-class BasePanel(ttk.Frame):
+class BasePanel(tk.Frame):
     """
     Common panel base with shared UI builders:
       - build_search_bar(): compact 'Search' label + Entry + optional refresh button
@@ -33,14 +32,14 @@ class BasePanel(ttk.Frame):
         pass
 
     # ---------- messaging ----------
-    def info(self, msg: str):
-        messagebox.showinfo("Info", msg, parent=self.winfo_toplevel())
+    def show_info(self, title, message):
+        messagebox.showinfo(title, message, parent=self.winfo_toplevel())
 
-    def warn(self, msg: str):
-        messagebox.showwarning("Warning", msg, parent=self.winfo_toplevel())
+    def show_error(self, title, message):
+        messagebox.showerror(title, message, parent=self.winfo_toplevel())
 
-    def error(self, msg: str):
-        messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
+    def confirm_delete(self, count):
+        return messagebox.askyesno("Delete", f"Delete {count} item(s)?", parent=self.winfo_toplevel())
 
     def set_status(self, msg: str):
         if hasattr(self.app, "set_status") and callable(self.app.set_status):
