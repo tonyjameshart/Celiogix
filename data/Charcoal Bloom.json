@@ -1,0 +1,25 @@
+{
+  "name": "charcoal_bloom",
+  "colors": {
+    "bg": "#2b2b2b",
+    "surface": "#383838",
+    "text": "#f0f0f0",
+    "muted_text": "#999999",
+    "border": "#5a5a5a",
+    "accent": "#c792ea",
+    "accent_fg": "#1a1a1a",
+    "warning": "#fbc02d",
+    "danger": "#ef5350",
+    "zebra_even": "#3c3c3c",
+    "zebra_odd": "#464646",
+    "low_bg": "#5a5a5a",
+    "low_fg": "#cccccc"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

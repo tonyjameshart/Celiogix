@@ -1,0 +1,25 @@
+{
+  "name": "slate_mist",
+  "colors": {
+    "bg": "#2e2e38",
+    "surface": "#3a3a47",
+    "text": "#e0e0e0",
+    "muted_text": "#a0a0a0",
+    "border": "#505060",
+    "accent": "#7fa1c2",
+    "accent_fg": "#1c1c1c",
+    "warning": "#ffd966",
+    "danger": "#ff6b6b",
+    "zebra_even": "#3f3f4f",
+    "zebra_odd": "#4a4a5a",
+    "low_bg": "#505060",
+    "low_fg": "#b0b0c0"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

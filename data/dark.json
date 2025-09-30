@@ -1,0 +1,25 @@
+{
+  "name": "dark",
+  "colors": {
+    "bg": "#424200",
+    "surface": "#808080",
+    "text": "#000000",
+    "muted_text": "#808080",
+    "border": "#000000",
+    "accent": "#000000",
+    "accent_fg": "#ffffff",
+    "warning": "#caca00",
+    "danger": "#9f0000",
+    "zebra_even": "#00ff80",
+    "zebra_odd": "#008080",
+    "low_bg": "#000000",
+    "low_fg": "#000000"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

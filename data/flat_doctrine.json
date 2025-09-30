@@ -1,0 +1,25 @@
+{
+  "name": "flat_doctrine",
+  "colors": {
+    "bg": "#FFFFFF",
+    "surface": "#FFFFFF",
+    "text": "#000000",
+    "muted_text": "#555555",
+    "border": "#DDDDDD",
+    "accent": "#DC143C",
+    "accent_fg": "#ffffff",
+    "warning": "#FFA500",
+    "danger": "#B22222",
+    "zebra_even": "#F7F7F7",
+    "zebra_odd": "#EFEFEF",
+    "low_bg": "#CCCCCC",
+    "low_fg": "#AAAAAA"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

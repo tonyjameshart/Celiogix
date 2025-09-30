@@ -1,0 +1,25 @@
+{
+  "name": "obsidian_fade",
+  "colors": {
+    "bg": "#1a1a1a",
+    "surface": "#262626",
+    "text": "#eaeaea",
+    "muted_text": "#7d7d7d",
+    "border": "#3d3d3d",
+    "accent": "#00bcd4",
+    "accent_fg": "#101010",
+    "warning": "#ffeb3b",
+    "danger": "#f44336",
+    "zebra_even": "#2a2a2a",
+    "zebra_odd": "#323232",
+    "low_bg": "#3d3d3d",
+    "low_fg": "#bfbfbf"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}

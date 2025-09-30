@@ -1,0 +1,25 @@
+{
+  "name": "graphite_glow",
+  "colors": {
+    "bg": "#1f1f1f",
+    "surface": "#2a2a2a",
+    "text": "#dcdcdc",
+    "muted_text": "#888888",
+    "border": "#444444",
+    "accent": "#ff9800",
+    "accent_fg": "#1f1f1f",
+    "warning": "#ffcc00",
+    "danger": "#e53935",
+    "zebra_even": "#2c2c2c",
+    "zebra_odd": "#333333",
+    "low_bg": "#444444",
+    "low_fg": "#aaaaaa"
+  },
+  "fonts": {
+    "base_family": "Segoe UI",
+    "base_size": 10,
+    "mono_family": "Consolas"
+  },
+  "spacing": { "xs": 2, "sm": 4, "md": 8, "lg": 12 },
+  "tree": { "row_height": 22 }
+}
