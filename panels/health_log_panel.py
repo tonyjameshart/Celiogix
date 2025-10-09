@@ -1,609 +1,931 @@
-# path: panels/health_log_panel.py
-from __future__ import annotations
+# path: panels/health_log_panel_pyside6.py
+"""
+Health Log Panel for PySide6 Application
 
-import datetime as _dt
-import tkinter as tk
-from tkinter import messagebox, ttk
-from typing import Any
+Manages health tracking with Gluten Guardian enhancements and Care Provider management.
+"""
+
+from typing import Optional, List, Dict, Any
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
+    QLineEdit, QTextEdit, QComboBox, QSpinBox, QTableWidget,
+    QTableWidgetItem, QHeaderView, QGroupBox, QDateEdit,
+    QMessageBox, QRadioButton, QSlider, QScrollArea, QDialog,
+    QTabWidget, QSplitter, QDialogButtonBox, QFormLayout,
+    QCheckBox, QFrame
+)
+from utils.custom_widgets import NoSelectionTableWidget
+from PySide6.QtCore import Qt, QDate, Signal
+from PySide6.QtGui import QFont
 
 from panels.base_panel import BasePanel
-from utils.export import export_table_html
-
-GI_SYMPTOMS = ["Abdominal pain", "Bloating", "Diarrhea", "Constipation", "Nausea", "Vomiting"]
-NEURO_SYMPTOMS = ["Brain fog", "Headache", "Dizziness"]
-SKIN_SYMPTOMS = ["Dermatitis herpetiformis", "Itching", "Rash"]
-SYSTEMIC_SYMPTOMS = ["Fatigue", "Joint pain"]
-
-RISK_OPTS = ["none", "low", "med", "high"]
-MEALS = ["Breakfast", "Lunch", "Dinner", "Snack", "Other"]
-
-# Table columns
-COLS = [
-    ("date", "Date", 100, "c"),
-    ("time", "Time", 70, "c"),
-    ("meal", "Meal", 90, "w"),
-    ("items", "Items", 260, "w"),
-    ("risk", "Risk", 60, "c"),
-    ("severity", "Sev", 60, "c"),
-    ("stool", "BM", 50, "c"),  # shows numeric code for compactness
-    ("recipe", "Recipe", 200, "w"),
-    ("symptoms", "Symptoms", 260, "w"),
-    ("notes", "Notes", 280, "w"),
-]
-
-# ---- Bristol helpers ----
-BRS_OPTIONS: list[tuple[int, str]] = [
-    (0, "0 – not recorded"),
-    (1, "1 – separate hard lumps (constipation)"),
-    (2, "2 – sausage-shaped but lumpy"),
-    (3, "3 – sausage with cracks"),
-    (4, "4 – smooth, soft sausage/snake (normal)"),
-    (5, "5 – soft blobs, clear edges (low fiber)"),
-    (6, "6 – fluffy pieces, ragged edges (mushy)"),
-    (7, "7 – watery, no solid pieces (diarrhea)"),
-]
-BRS_VALUES = [label for _n, label in BRS_OPTIONS]
+from panels.context_menu_mixin import HealthLogContextMenuMixin
+from services.care_provider_service import get_care_provider_service, CareProviderData
 
 
-def bristol_label(n: int) -> str:
-    for code, label in BRS_OPTIONS:
-        if int(code) == int(n):
-            return label
-    return BRS_OPTIONS[0][1]
-
-
-def bristol_code(label: str) -> int:
-    if not label:
-        return 0
-    s = str(label).strip()
-    try:
-        return int(s.split("–", 1)[0].strip())
-    except Exception:
-        pass
-    for code, lab in BRS_OPTIONS:
-        if lab == label:
-            return code
-    return 0
-
-
-def _today() -> str:
-    return _dt.date.today().isoformat()
-
-
-def _now_hhmm() -> str:
-    t = _dt.datetime.now().time()
-    return f"{t.hour:02d}:{t.minute:02d}"
-
-
-class HealthLogPanel(BasePanel):
-    """
-    Health Log: Add/Edit form + filterable table + HTML export.
-    Uses table `health_log(date,time,meal,items,risk,onset_min,severity,stool,recipe,symptoms,notes)`.
-    """
-
-    def __init__(self, master, app, **kw):
-        # form vars
-        self.var_date = tk.StringVar(value=_today())
-        self.var_time = tk.StringVar(value=_now_hhmm())
-        self.var_meal = tk.StringVar(value="Dinner")
-        self.var_recipe = tk.StringVar(value="")
-        self.var_items = tk.StringVar(value="")
-        self.var_risk = tk.StringVar(value="none")
-        self.var_sev = tk.IntVar(value=0)
-        self.var_onset = tk.IntVar(value=0)
-        # store the descriptive label in the UI; convert to int on save
-        self.var_bristol_label = tk.StringVar(value=BRS_OPTIONS[0][1])
-        self.var_notes = tk.StringVar(value="")
-
-        # symptoms vars
-        self.sym_vars: dict[str, tk.BooleanVar] = {}
-
-        # filter vars
-        self.f_from = tk.StringVar(value=(_dt.date.today() - _dt.timedelta(days=6)).isoformat())
-        self.f_to = tk.StringVar(value=_today())
-        self.f_minsev = tk.IntVar(value=0)
-        self.f_risk = tk.StringVar(value="any")
-        self.f_kw = tk.StringVar(value="")
-
-        self._tree: ttk.Treeview | None = None
-        super().__init__(master, app, **kw)
-
-    # ---------- UI ----------
-    def build(self) -> None:
-        self.grid_rowconfigure(3, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-
-        # Add/Edit frame (top)
-        addf = ttk.LabelFrame(self, text="Add / Edit Entry")
-        addf.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 6))
-        addf.grid_columnconfigure(8, weight=1)
-
-        r = 0
-        ttk.Label(addf, text="Date").grid(row=r, column=0, padx=(6, 6), pady=4, sticky="e")
-        ttk.Entry(addf, textvariable=self.var_date, width=12).grid(
-            row=r, column=1, pady=4, sticky="w"
-        )
-
-        ttk.Label(addf, text="Time (HH:MM)").grid(row=r, column=2, padx=(12, 6), pady=4, sticky="e")
-        ttk.Entry(addf, textvariable=self.var_time, width=8).grid(
-            row=r, column=3, pady=4, sticky="w"
-        )
-
-        ttk.Label(addf, text="Meal").grid(row=r, column=4, padx=(12, 6), pady=4, sticky="e")
-        ttk.Combobox(
-            addf,
-            textvariable=self.var_meal,
-            width=12,
-            values=["Breakfast", "Lunch", "Dinner", "Snack", "Other"],
-            state="readonly",
-        ).grid(row=r, column=5, pady=4, sticky="w")
-
-        ttk.Label(addf, text="Recipe (optional)").grid(
-            row=r, column=6, padx=(12, 6), pady=4, sticky="e"
-        )
-        self.cb_recipe = ttk.Combobox(
-            addf,
-            textvariable=self.var_recipe,
-            width=28,
-            values=self._recipe_titles(),
-            state="normal",
-        )
-        self.cb_recipe.grid(row=r, column=7, pady=4, sticky="w")
-
-        r += 1
-        ttk.Label(addf, text="Items/Consumed").grid(
-            row=r, column=0, padx=(6, 6), pady=4, sticky="e"
-        )
-        ttk.Entry(addf, textvariable=self.var_items, width=60).grid(
-            row=r, column=1, columnspan=5, pady=4, sticky="ew"
-        )
-
-        ttk.Label(addf, text="Risk").grid(row=r, column=6, padx=(12, 6), pady=4, sticky="e")
-        ttk.Combobox(
-            addf, textvariable=self.var_risk, width=8, values=RISK_OPTS, state="readonly"
-        ).grid(row=r, column=7, pady=4, sticky="w")
-
-        r += 1
-        ttk.Label(addf, text="Onset (min)").grid(row=r, column=0, padx=(6, 6), pady=4, sticky="e")
-        ttk.Spinbox(addf, from_=0, to=720, textvariable=self.var_onset, width=6).grid(
-            row=r, column=1, pady=4, sticky="w"
-        )
-
-        ttk.Label(addf, text="Bristol").grid(row=r, column=2, padx=(12, 6), pady=4, sticky="e")
-        cb_bristol = ttk.Combobox(
-            addf, textvariable=self.var_bristol_label, width=44, state="readonly", values=BRS_VALUES
-        )
-        cb_bristol.grid(row=r, column=3, columnspan=3, pady=4, sticky="w")
-
-        ttk.Label(addf, text="Severity (0–10)").grid(
-            row=r, column=6, padx=(12, 6), pady=4, sticky="e"
-        )
-        ttk.Spinbox(addf, from_=0, to=10, textvariable=self.var_sev, width=4).grid(
-            row=r, column=7, pady=4, sticky="w"
-        )
-
-        # Symptoms blocks
-        r += 1
-        grid = ttk.Frame(addf)
-        grid.grid(row=r, column=0, columnspan=5, sticky="w", padx=4, pady=(4, 6))
-        self._sym_block(grid, "GI", GI_SYMPTOMS, col=0)
-        self._sym_block(grid, "Neuro", NEURO_SYMPTOMS, col=1)
-        self._sym_block(grid, "Skin", SKIN_SYMPTOMS, col=2)
-        self._sym_block(grid, "Systemic", SYSTEMIC_SYMPTOMS, col=3)
-
-        ttk.Label(addf, text="Notes").grid(row=r, column=6, padx=(12, 6), sticky="ne")
-        self.txt_notes = tk.Text(addf, height=6, width=40, wrap="word")
-        self.txt_notes.grid(row=r, column=7, padx=(0, 6), pady=(2, 6), sticky="nsew")
-
-        # Buttons
-        r += 1
-        btns = ttk.Frame(addf)
-        btns.grid(row=r, column=0, columnspan=8, sticky="w", padx=6, pady=(0, 6))
-        ttk.Button(btns, text="Add Entry", command=self.add_entry).pack(side="left")
-        ttk.Button(btns, text="Clear", command=self.clear_form).pack(side="left", padx=(8, 0))
-
-        # Filter / Export bar
-        filt = ttk.LabelFrame(self, text="Filter / Export")
-        filt.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
-        for i in range(20):
-            filt.grid_columnconfigure(i, weight=0)
-        filt.grid_columnconfigure(19, weight=1)
-
-        ttk.Label(filt, text="From").grid(row=0, column=0, padx=(6, 6), pady=6, sticky="e")
-        ttk.Entry(filt, textvariable=self.f_from, width=12).grid(
-            row=0, column=1, pady=6, sticky="w"
-        )
-        ttk.Label(filt, text="To").grid(row=0, column=2, padx=(10, 6), pady=6, sticky="e")
-        ttk.Entry(filt, textvariable=self.f_to, width=12).grid(row=0, column=3, pady=6, sticky="w")
-        ttk.Button(filt, text="This Week", command=self._this_week).grid(
-            row=0, column=4, padx=(8, 0), pady=6, sticky="w"
-        )
-
-        ttk.Button(filt, text="Load", command=self.load_rows).grid(
-            row=0, column=5, padx=(14, 0), pady=6
-        )
-
-        ttk.Label(filt, text="Min Severity").grid(row=0, column=6, padx=(14, 6), pady=6, sticky="e")
-        ttk.Spinbox(filt, from_=0, to=10, textvariable=self.f_minsev, width=4).grid(
-            row=0, column=7, pady=6, sticky="w"
-        )
-
-        ttk.Label(filt, text="Risk").grid(row=0, column=8, padx=(14, 6), pady=6, sticky="e")
-        ttk.Combobox(
-            filt, textvariable=self.f_risk, width=8, values=["any"] + RISK_OPTS, state="readonly"
-        ).grid(row=0, column=9, pady=6, sticky="w")
-
-        ttk.Label(filt, text="Keyword").grid(row=0, column=10, padx=(14, 6), pady=6, sticky="e")
-        ttk.Entry(filt, textvariable=self.f_kw, width=24).grid(row=0, column=11, pady=6, sticky="w")
-
-        ttk.Button(filt, text="Copy", command=self.copy_visible_to_clipboard).grid(
-            row=0, column=12, padx=(12, 0), pady=6
-        )
-        ttk.Button(filt, text="Export HTML", command=self.export_html_visible).grid(
-            row=0, column=13, padx=(8, 0), pady=6
-        )
-
-        # Table
-        wrap = ttk.Frame(self)
-        wrap.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
-        wrap.grid_rowconfigure(0, weight=1)
-        wrap.grid_columnconfigure(0, weight=1)
-
-        tv = ttk.Treeview(
-            wrap, columns=[c[0] for c in COLS], show="headings", selectmode="extended"
-        )
-        for k, hdr, width, align in COLS:
-            tv.heading(k, text=hdr)
-            anc = {"w": "w", "c": "center", "e": "e"}.get(align, "w")
-            tv.column(k, width=width, anchor=anc, stretch=True)
-        tv.grid(row=0, column=0, sticky="nsew")
-
-        vsb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
-        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=tv.xview)
-        tv.configure(yscroll=vsb.set, xscroll=hsb.set)
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-
-        self._tree = tv
-
-        # Context menu + bindings
-        menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Edit", command=self.edit_selected)
-        menu.add_command(label="Delete", command=self.delete_selected)
-        menu.add_separator()
-        menu.add_command(label="Export HTML (visible)", command=self.export_html_visible)
-
-        def popup(ev):
-            try:
-                menu.tk_popup(ev.x_root, ev.y_root)
-            finally:
-                menu.grab_release()
-
-        tv.bind("<Button-3>", popup)
-        tv.bind("<Double-1>", lambda e: self.edit_selected())
-
-        # initial load
-        self.load_rows()
-
-    def _sym_block(self, parent: tk.Widget, title: str, options: list[str], *, col: int) -> None:
-        box = ttk.LabelFrame(parent, text=title)
-        box.grid(row=0, column=col, padx=(0 if col == 0 else 8, 8), sticky="nw")
-        for i, name in enumerate(options):
-            var = self.sym_vars.setdefault(name, tk.BooleanVar(value=False))
-            ttk.Checkbutton(box, text=name, variable=var).grid(row=i, column=0, sticky="w")
-
-    def _recipe_titles(self) -> list[str]:
-        try:
-            rows = self.db.execute("SELECT title FROM recipes ORDER BY LOWER(title)").fetchall()
-            return [r["title"] for r in rows if (r["title"] or "").strip()]
-        except Exception:
-            return []
-
-    # ---------- Add / Clear ----------
-    def _collect_symptoms(self) -> str:
-        sel = [name for name, v in self.sym_vars.items() if v.get()]
-        return ", ".join(sel)
-
-    def add_entry(self) -> None:
-        notes = self.txt_notes.get("1.0", "end").strip()
-        try:
-            self.db.execute(
-                """
-                INSERT INTO health_log(date,time,meal,items,risk,onset_min,severity,stool,recipe,symptoms,notes)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """,
-                (
-                    (self.var_date.get() or "").strip(),
-                    (self.var_time.get() or "").strip(),
-                    (self.var_meal.get() or "").strip(),
-                    (self.var_items.get() or "").strip(),
-                    (self.var_risk.get() or "").strip(),
-                    int(self.var_onset.get() or 0),
-                    int(self.var_sev.get() or 0),
-                    bristol_code(self.var_bristol_label.get()),
-                    (self.var_recipe.get() or "").strip(),
-                    self._collect_symptoms(),
-                    notes,
-                ),
-            )
-            self.db.commit()
-            self.set_status("Entry added")
-            self.clear_form()
-            self.load_rows()
-        except Exception as e:
-            self.error(f"Failed to add entry:\n{e!s}")
-
-    def clear_form(self) -> None:
-        self.var_date.set(_today())
-        self.var_time.set(_now_hhmm())
-        self.var_meal.set("Dinner")
-        self.var_recipe.set("")
-        self.var_items.set("")
-        self.var_risk.set("none")
-        self.var_sev.set(0)
-        self.var_onset.set(0)
-        self.var_bristol_label.set(BRS_OPTIONS[0][1])
-        self.txt_notes.delete("1.0", "end")
-        for v in self.sym_vars.values():
-            v.set(False)
-
-    # ---------- Filtering / loading ----------
-    def _this_week(self) -> None:
-        today = _dt.date.today()
-        start = today - _dt.timedelta(days=today.weekday())  # Monday
-        self.f_from.set(start.isoformat())
-        self.f_to.set(today.isoformat())
-
-    def _filters_sql(self) -> tuple[str, list[Any]]:
-        where = []
-        args: list[Any] = []
-        f, t = (self.f_from.get() or "").strip(), (self.f_to.get() or "").strip()
-        if f:
-            where.append("date >= ?")
-            args.append(f)
-        if t:
-            where.append("date <= ?")
-            args.append(t)
-        if (self.f_minsev.get() or 0) > 0:
-            where.append("IFNULL(severity,0) >= ?")
-            args.append(int(self.f_minsev.get()))
-        risk = (self.f_risk.get() or "any").strip().lower()
-        if risk != "any":
-            where.append("LOWER(COALESCE(risk,'')) = ?")
-            args.append(risk)
-        kw = (self.f_kw.get() or "").strip().lower()
-        if kw:
-            where.append(
-                """LOWER(
-                COALESCE(items,'') || ' ' ||
-                COALESCE(symptoms,'') || ' ' ||
-                COALESCE(recipe,'') || ' ' ||
-                COALESCE(notes,'')
-            ) LIKE ?"""
-            )
-            args.append(f"%{kw}%")
-        wsql = (" WHERE " + " AND ".join(where)) if where else ""
-        return wsql, args
-
-    def load_rows(self) -> None:
-        tv = self._tree
-        if not isinstance(tv, ttk.Treeview):
+class CareProviderDialog(QDialog):
+    """Dialog for adding/editing care providers"""
+    
+    def __init__(self, parent=None, provider_data: CareProviderData = None):
+        super().__init__(parent)
+        self.provider_data = provider_data
+        self.setWindowTitle("Add Care Provider" if provider_data is None else "Edit Care Provider")
+        self.setModal(True)
+        self.setMinimumSize(500, 600)
+        self.setup_ui()
+        
+        if provider_data:
+            self.load_provider_data()
+    
+    def setup_ui(self):
+        """Set up the dialog UI"""
+        layout = QVBoxLayout(self)
+        
+        # Scroll area for form
+        scroll_area = QScrollArea()
+        scroll_widget = QWidget()
+        form_layout = QFormLayout(scroll_widget)
+        
+        # Basic Information
+        basic_group = QGroupBox("Basic Information")
+        basic_layout = QFormLayout(basic_group)
+        
+        self.name_edit = QLineEdit()
+        self.title_edit = QLineEdit()
+        self.specialty_combo = QComboBox()
+        self.specialty_combo.setEditable(True)
+        self.specialty_combo.addItems([
+            "Primary Care", "Gastroenterologist", "Nutritionist/Dietitian", 
+            "Endocrinologist", "Dermatologist", "Emergency Medicine",
+            "Internal Medicine", "Family Medicine", "Other"
+        ])
+        self.organization_edit = QLineEdit()
+        
+        basic_layout.addRow("Name:", self.name_edit)
+        basic_layout.addRow("Title:", self.title_edit)
+        basic_layout.addRow("Specialty:", self.specialty_combo)
+        basic_layout.addRow("Organization:", self.organization_edit)
+        
+        # Contact Information
+        contact_group = QGroupBox("Contact Information")
+        contact_layout = QFormLayout(contact_group)
+        
+        self.phone_edit = QLineEdit()
+        self.email_edit = QLineEdit()
+        self.website_edit = QLineEdit()
+        self.preferred_contact_combo = QComboBox()
+        self.preferred_contact_combo.addItems(["phone", "email", "both"])
+        
+        contact_layout.addRow("Phone:", self.phone_edit)
+        contact_layout.addRow("Email:", self.email_edit)
+        contact_layout.addRow("Website:", self.website_edit)
+        contact_layout.addRow("Preferred Contact:", self.preferred_contact_combo)
+        
+        # Address Information
+        address_group = QGroupBox("Address Information")
+        address_layout = QFormLayout(address_group)
+        
+        self.address_edit = QTextEdit()
+        self.address_edit.setMaximumHeight(60)
+        self.city_edit = QLineEdit()
+        self.state_edit = QLineEdit()
+        self.zip_edit = QLineEdit()
+        
+        address_layout.addRow("Address:", self.address_edit)
+        address_layout.addRow("City:", self.city_edit)
+        address_layout.addRow("State:", self.state_edit)
+        address_layout.addRow("ZIP Code:", self.zip_edit)
+        
+        # Additional Information
+        additional_group = QGroupBox("Additional Information")
+        additional_layout = QFormLayout(additional_group)
+        
+        self.emergency_checkbox = QCheckBox("Emergency Contact")
+        self.last_appointment_edit = QLineEdit()
+        self.next_appointment_edit = QLineEdit()
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setMaximumHeight(80)
+        
+        additional_layout.addRow("Emergency Contact:", self.emergency_checkbox)
+        additional_layout.addRow("Last Appointment:", self.last_appointment_edit)
+        additional_layout.addRow("Next Appointment:", self.next_appointment_edit)
+        additional_layout.addRow("Notes:", self.notes_edit)
+        
+        # Add groups to form
+        form_layout.addWidget(basic_group)
+        form_layout.addWidget(contact_group)
+        form_layout.addWidget(address_group)
+        form_layout.addWidget(additional_group)
+        
+        scroll_area.setWidget(scroll_widget)
+        scroll_area.setWidgetResizable(True)
+        layout.addWidget(scroll_area)
+        
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def load_provider_data(self):
+        """Load provider data into form"""
+        if not self.provider_data:
             return
-        for it in tv.get_children():
-            tv.delete(it)
-
-        wsql, args = self._filters_sql()
-        sql = f"""
-            SELECT date,time,meal,items,risk,IFNULL(severity,0) AS severity,IFNULL(stool,0) AS stool,
-                   recipe, symptoms, notes, rowid AS _id
-              FROM health_log
-              {wsql}
-             ORDER BY date ASC, time ASC
-        """
-        rows = self.db.execute(sql, args).fetchall()
-        for r in rows:
-            tv.insert(
-                "",
-                "end",
-                iid=str(r["_id"]),
-                values=[
-                    r["date"] or "",
-                    r["time"] or "",
-                    r["meal"] or "",
-                    r["items"] or "",
-                    r["risk"] or "",
-                    r["severity"] or "",
-                    r["stool"] or "",
-                    r["recipe"] or "",
-                    r["symptoms"] or "",
-                    r["notes"] or "",
-                ],
-            )
-        self.set_status(f"{len(rows)} entrie(s)" if len(rows) == 1 else f"{len(rows)} entries")
-
-    # ---------- Edit/Delete ----------
-    def edit_selected(self) -> None:
-        tv = self._tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if len(sel) != 1:
-            messagebox.showinfo(
-                "Health Log", "Select one row to edit.", parent=self.winfo_toplevel()
-            )
-            return
-        rid = int(sel[0])
-        row = self.db.execute(
-            """
-            SELECT date,time,meal,items,risk,onset_min,severity,stool,recipe,symptoms,notes
-              FROM health_log WHERE rowid=?
-        """,
-            (rid,),
-        ).fetchone()
-        if not row:
-            return
-        data = self._edit_dialog(row)
-        if not data:
-            return
-        self.db.execute(
-            """
-            UPDATE health_log
-               SET date=?, time=?, meal=?, items=?, risk=?, onset_min=?, severity=?, stool=?, recipe=?, symptoms=?, notes=?
-             WHERE rowid=?
-        """,
-            (
-                data["date"],
-                data["time"],
-                data["meal"],
-                data["items"],
-                data["risk"],
-                data["onset_min"],
-                data["severity"],
-                data["stool"],
-                data["recipe"],
-                data["symptoms"],
-                data["notes"],
-                rid,
-            ),
-        )
-        self.db.commit()
-        self.load_rows()
-        self.set_status("Entry updated")
-
-    def delete_selected(self) -> None:
-        tv = self._tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if not sel:
-            return
-        if not self.confirm_delete(len(sel)):
-            return
-        ids = [int(i) for i in sel]
-        q = ",".join("?" for _ in ids)
-        self.db.execute(f"DELETE FROM health_log WHERE rowid IN ({q})", ids)
-        self.db.commit()
-        self.load_rows()
-        self.set_status(f"Deleted {len(ids)} entries")
-
-    # ---------- Export / copy ----------
-    def export_html_visible(self) -> None:
-        tv = self._tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        items = tv.get_children("")
-        rows = [list(tv.item(iid, "values")) for iid in items]
-        headings = [hdr for _k, hdr, _w, _a in COLS]
-        export_table_html(
-            path=None,
-            title="Health Log",
-            columns=headings,
-            rows=rows,
-            subtitle="Generated from Celiac Culinary",
-            meta={"Source": "Health Log", "Rows": len(rows)},
-            open_after=True,
-        )
-        self.set_status(f"Exported {len(rows)} entries to HTML")
-
-    def copy_visible_to_clipboard(self) -> None:
-        tv = self._tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        items = tv.get_children("")
-        cols = [c[0] for c in COLS]
-        out = [",".join(cols)]
-        for iid in items:
-            vals = tv.item(iid, "values")
-            line = ",".join(str(v).replace("\n", " ").replace(",", ";") for v in vals)
-            out.append(line)
-        s = "\n".join(out)
-        self.clipboard_clear()
-        self.clipboard_append(s)
-        self.set_status("Copied")
-
-    # ---------- small edit dialog ----------
-    def _edit_dialog(self, row: dict[str, Any]) -> dict[str, Any] | None:
-        dlg = tk.Toplevel(self)
-        dlg.title("Edit Health Entry")
-        dlg.transient(self.winfo_toplevel())
-        dlg.grab_set()
-        frm = ttk.Frame(dlg, padding=8)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.grid_columnconfigure(0, weight=1)
-        dlg.grid_rowconfigure(0, weight=1)
-
-        sv = {
-            "date": tk.StringVar(value=row["date"] or ""),
-            "time": tk.StringVar(value=row["time"] or ""),
-            "meal": tk.StringVar(value=row["meal"] or ""),
-            "items": tk.StringVar(value=row["items"] or ""),
-            "risk": tk.StringVar(value=row["risk"] or "none"),
-            "onset_min": tk.StringVar(value=str(row["onset_min"] or 0)),
-            "severity": tk.StringVar(value=str(row["severity"] or 0)),
-            "stool_label": tk.StringVar(value=bristol_label(int(row["stool"] or 0))),
-            "recipe": tk.StringVar(value=row["recipe"] or ""),
-            "symptoms": tk.StringVar(value=row["symptoms"] or ""),
-            "notes": tk.StringVar(value=row["notes"] or ""),
+            
+        self.name_edit.setText(self.provider_data.name)
+        self.title_edit.setText(self.provider_data.title)
+        
+        # Set specialty
+        specialty_index = self.specialty_combo.findText(self.provider_data.specialty)
+        if specialty_index >= 0:
+            self.specialty_combo.setCurrentIndex(specialty_index)
+        else:
+            self.specialty_combo.setCurrentText(self.provider_data.specialty)
+        
+        self.organization_edit.setText(self.provider_data.organization)
+        self.phone_edit.setText(self.provider_data.phone or "")
+        self.email_edit.setText(self.provider_data.email or "")
+        self.website_edit.setText(self.provider_data.website or "")
+        self.preferred_contact_combo.setCurrentText(self.provider_data.preferred_contact_method)
+        
+        self.address_edit.setPlainText(self.provider_data.address or "")
+        self.city_edit.setText(self.provider_data.city or "")
+        self.state_edit.setText(self.provider_data.state or "")
+        self.zip_edit.setText(self.provider_data.zip_code or "")
+        
+        self.emergency_checkbox.setChecked(self.provider_data.emergency_contact)
+        self.last_appointment_edit.setText(self.provider_data.last_appointment or "")
+        self.next_appointment_edit.setText(self.provider_data.next_appointment or "")
+        self.notes_edit.setPlainText(self.provider_data.notes or "")
+    
+    def get_provider_data(self) -> Dict[str, Any]:
+        """Get provider data from form"""
+        return {
+            'name': self.name_edit.text().strip(),
+            'title': self.title_edit.text().strip(),
+            'specialty': self.specialty_combo.currentText().strip(),
+            'organization': self.organization_edit.text().strip(),
+            'phone': self.phone_edit.text().strip() or None,
+            'email': self.email_edit.text().strip() or None,
+            'website': self.website_edit.text().strip() or None,
+            'preferred_contact_method': self.preferred_contact_combo.currentText(),
+            'address': self.address_edit.toPlainText().strip() or None,
+            'city': self.city_edit.text().strip() or None,
+            'state': self.state_edit.text().strip() or None,
+            'zip_code': self.zip_edit.text().strip() or None,
+            'emergency_contact': self.emergency_checkbox.isChecked(),
+            'last_appointment': self.last_appointment_edit.text().strip() or None,
+            'next_appointment': self.next_appointment_edit.text().strip() or None,
+            'notes': self.notes_edit.toPlainText().strip() or None,
+            'provider_id': self.provider_data.provider_id if self.provider_data else None
         }
 
-        r = 0
 
-        def roww(label, widget, col=1):
-            nonlocal r
-            ttk.Label(frm, text=label).grid(row=r, column=0, sticky="e", padx=(0, 8), pady=(0, 4))
-            widget.grid(row=r, column=col, sticky="ew", pady=(0, 4))
-            frm.grid_columnconfigure(col, weight=1)
-            r += 1
-
-        roww("Date", ttk.Entry(frm, textvariable=sv["date"], width=12))
-        roww("Time (HH:MM)", ttk.Entry(frm, textvariable=sv["time"], width=8))
-        roww(
-            "Meal",
-            ttk.Combobox(frm, textvariable=sv["meal"], values=MEALS, state="readonly", width=12),
+class HealthLogPanel(HealthLogContextMenuMixin, BasePanel):
+    """Health log panel for PySide6 with Gluten Guardian features and Care Provider management"""
+    
+    def __init__(self, master=None, app=None):
+        # Initialize care provider service before calling super().__init__()
+        # because setup_ui() will be called during super().__init__()
+        try:
+            self.care_provider_service = get_care_provider_service()
+        except Exception as e:
+            print(f"Error initializing care provider service: {e}")
+            # Create a dummy service to prevent attribute errors
+            self.care_provider_service = None
+        
+        # Now call super().__init__() which will call setup_ui()
+        super().__init__(master, app)
+        
+        # Connect signals after the UI is set up
+        if self.care_provider_service:
+            try:
+                self.care_provider_service.provider_added.connect(self.on_provider_added)
+                self.care_provider_service.provider_updated.connect(self.on_provider_updated)
+                self.care_provider_service.provider_deleted.connect(self.on_provider_deleted)
+                self.care_provider_service.appointment_created.connect(self.on_appointment_created)
+            except Exception as e:
+                print(f"Error connecting care provider service signals: {e}")
+    
+    def setup_ui(self):
+        """Set up the health log panel UI with tabs"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
+        
+        # Setup tabs
+        self.setup_health_logging_tab()
+        self.setup_care_providers_tab()
+    
+    def setup_health_logging_tab(self):
+        """Set up the health logging tab"""
+        health_widget = QWidget()
+        layout = QVBoxLayout(health_widget)
+        
+        # Quick actions toolbar
+        actions_layout = QHBoxLayout()
+        
+        self.export_btn = QPushButton("Export Data")
+        self.export_btn.clicked.connect(self.export_health_data)
+        actions_layout.addWidget(self.export_btn)
+        
+        self.import_btn = QPushButton("Import Data")
+        self.import_btn.clicked.connect(self.import_health_data)
+        actions_layout.addWidget(self.import_btn)
+        
+        self.bulk_add_btn = QPushButton("Bulk Add")
+        self.bulk_add_btn.clicked.connect(self.bulk_add_entries)
+        actions_layout.addWidget(self.bulk_add_btn)
+        
+        self.analyze_btn = QPushButton("Analyze Patterns")
+        self.analyze_btn.clicked.connect(self.analyze_patterns)
+        actions_layout.addWidget(self.analyze_btn)
+        
+        actions_layout.addStretch()
+        layout.addLayout(actions_layout)
+        
+        # Scroll area for the form
+        scroll_area = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Basic Information Group
+        basic_group = QGroupBox("Basic Information")
+        basic_layout = QVBoxLayout(basic_group)
+        
+        # Date and Time
+        datetime_layout = QHBoxLayout()
+        datetime_layout.addWidget(QLabel("Date:"))
+        self.date_edit = QDateEdit()
+        self.date_edit.setDate(QDate.currentDate())
+        datetime_layout.addWidget(self.date_edit)
+        
+        datetime_layout.addWidget(QLabel("Time:"))
+        self.time_combo = QComboBox()
+        self.time_combo.addItems([f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 15)])
+        datetime_layout.addWidget(self.time_combo)
+        basic_layout.addLayout(datetime_layout)
+        
+        # Meal Type
+        meal_layout = QHBoxLayout()
+        meal_layout.addWidget(QLabel("Meal Type:"))
+        self.meal_combo = QComboBox()
+        self.meal_combo.addItems(["Breakfast", "Lunch", "Dinner", "Snack", "Other"])
+        meal_layout.addWidget(self.meal_combo)
+        basic_layout.addLayout(meal_layout)
+        
+        # Items Consumed
+        items_layout = QVBoxLayout()
+        items_layout.addWidget(QLabel("Items Consumed:"))
+        self.items_edit = QTextEdit()
+        self.items_edit.setMaximumHeight(60)
+        self.items_edit.setPlaceholderText("Enter items consumed...")
+        items_layout.addWidget(self.items_edit)
+        basic_layout.addLayout(items_layout)
+        
+        scroll_layout.addWidget(basic_group)
+        
+        # Symptoms Group
+        symptoms_group = QGroupBox("Symptoms & Assessment")
+        symptoms_layout = QVBoxLayout(symptoms_group)
+        
+        # Risk Level
+        risk_layout = QHBoxLayout()
+        risk_layout.addWidget(QLabel("Risk Level:"))
+        self.risk_combo = QComboBox()
+        self.risk_combo.addItems(["none", "low", "med", "high"])
+        risk_layout.addWidget(self.risk_combo)
+        symptoms_layout.addLayout(risk_layout)
+        
+        # Onset and Severity
+        onset_layout = QHBoxLayout()
+        onset_layout.addWidget(QLabel("Onset (minutes):"))
+        self.onset_spin = QSpinBox()
+        self.onset_spin.setRange(0, 1440)  # Up to 24 hours
+        onset_layout.addWidget(self.onset_spin)
+        
+        onset_layout.addWidget(QLabel("Severity (0-10):"))
+        self.severity_spin = QSpinBox()
+        self.severity_spin.setRange(0, 10)
+        onset_layout.addWidget(self.severity_spin)
+        symptoms_layout.addLayout(onset_layout)
+        
+        # Symptoms
+        symptoms_text_layout = QVBoxLayout()
+        symptoms_text_layout.addWidget(QLabel("Symptoms:"))
+        self.symptoms_edit = QTextEdit()
+        self.symptoms_edit.setMaximumHeight(60)
+        self.symptoms_edit.setPlaceholderText("Describe symptoms...")
+        symptoms_text_layout.addWidget(self.symptoms_edit)
+        symptoms_layout.addLayout(symptoms_text_layout)
+        
+        scroll_layout.addWidget(symptoms_group)
+        
+        # Bristol Stool Scale Group
+        bristol_group = QGroupBox("Bristol Stool Scale")
+        bristol_layout = QVBoxLayout(bristol_group)
+        
+        self.bristol_buttons = []
+        bristol_types = [
+            "1 - Separate hard lumps (constipation)",
+            "2 - Lumpy sausage",
+            "3 - Cracked sausage",
+            "4 - Smooth sausage (normal)",
+            "5 - Soft blobs",
+            "6 - Fluffy pieces",
+            "7 - Watery (diarrhea)"
+        ]
+        
+        for i, bristol_type in enumerate(bristol_types):
+            radio = QRadioButton(bristol_type)
+            self.bristol_buttons.append(radio)
+            bristol_layout.addWidget(radio)
+        
+        # Set default to type 4 (normal)
+        self.bristol_buttons[3].setChecked(True)
+        scroll_layout.addWidget(bristol_group)
+        
+        # Gluten Guardian Tracking Group
+        gg_group = QGroupBox("Gluten Guardian Tracking")
+        gg_layout = QVBoxLayout(gg_group)
+        
+        # Hydration and Fiber
+        hydration_layout = QHBoxLayout()
+        hydration_layout.addWidget(QLabel("Hydration (L):"))
+        self.hydration_spin = QSpinBox()
+        self.hydration_spin.setRange(0, 10)
+        self.hydration_spin.setSuffix(" L")
+        hydration_layout.addWidget(self.hydration_spin)
+        
+        hydration_layout.addWidget(QLabel("Fiber (g):"))
+        self.fiber_spin = QSpinBox()
+        self.fiber_spin.setRange(0, 100)
+        self.fiber_spin.setSuffix(" g")
+        hydration_layout.addWidget(self.fiber_spin)
+        gg_layout.addLayout(hydration_layout)
+        
+        # Mood
+        mood_layout = QHBoxLayout()
+        mood_layout.addWidget(QLabel("Mood:"))
+        self.mood_combo = QComboBox()
+        self.mood_combo.addItems(["😊", "😐", "😣", "😢", "😡"])
+        mood_layout.addWidget(self.mood_combo)
+        gg_layout.addLayout(mood_layout)
+        
+        # Energy Level
+        energy_layout = QVBoxLayout()
+        energy_layout.addWidget(QLabel("Energy Level (1-10):"))
+        self.energy_slider = QSlider(Qt.Horizontal)
+        self.energy_slider.setRange(1, 10)
+        self.energy_slider.setValue(5)
+        self.energy_label = QLabel("5")
+        self.energy_slider.valueChanged.connect(lambda v: self.energy_label.setText(str(v)))
+        energy_layout.addWidget(self.energy_slider)
+        energy_layout.addWidget(self.energy_label)
+        gg_layout.addLayout(energy_layout)
+        
+        scroll_layout.addWidget(gg_group)
+        
+        # Notes Group
+        notes_group = QGroupBox("Notes")
+        notes_layout = QVBoxLayout(notes_group)
+        
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setMaximumHeight(80)
+        self.notes_edit.setPlaceholderText("Additional notes...")
+        notes_layout.addWidget(self.notes_edit)
+        
+        scroll_layout.addWidget(notes_group)
+        
+        scroll_area.setWidget(scroll_widget)
+        scroll_area.setWidgetResizable(True)
+        layout.addWidget(scroll_area)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        save_button = QPushButton("Save Entry")
+        save_button.clicked.connect(self.save_entry)
+        button_layout.addWidget(save_button)
+        
+        clear_button = QPushButton("Clear Form")
+        clear_button.clicked.connect(self.clear_form)
+        button_layout.addWidget(clear_button)
+        
+        analyze_button = QPushButton("Analyze Patterns")
+        analyze_button.clicked.connect(self.analyze_patterns)
+        button_layout.addWidget(analyze_button)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        # Health Log Entries Table
+        entries_group = QGroupBox("Health Log Entries")
+        entries_layout = QVBoxLayout(entries_group)
+        
+        self.entries_table = NoSelectionTableWidget()
+        self.entries_table.setColumnCount(7)
+        self.entries_table.setHorizontalHeaderLabels(["Date", "Time", "Meal", "Items", "Risk", "Severity", "Symptoms"])
+        self.entries_table.setMaximumHeight(200)
+        entries_layout.addWidget(self.entries_table)
+        
+        layout.addWidget(entries_group)
+        
+        self.tab_widget.addTab(health_widget, "🏥 Health Logging")
+    
+    def setup_care_providers_tab(self):
+        """Set up the care providers tab"""
+        providers_widget = QWidget()
+        layout = QVBoxLayout(providers_widget)
+        
+        # Summary section
+        summary_group = QGroupBox("📊 Care Provider Summary")
+        summary_layout = QHBoxLayout(summary_group)
+        
+        self.total_providers_label = QLabel("Total Providers: 0")
+        self.emergency_providers_label = QLabel("Emergency Contacts: 0")
+        self.specialties_count_label = QLabel("Specialties: 0")
+        
+        summary_layout.addWidget(self.total_providers_label)
+        summary_layout.addWidget(self.emergency_providers_label)
+        summary_layout.addWidget(self.specialties_count_label)
+        summary_layout.addStretch()
+        
+        layout.addWidget(summary_group)
+        
+        # Search and filter section
+        search_group = QGroupBox("🔍 Search & Filter")
+        search_layout = QVBoxLayout(search_group)
+        
+        # Search bar
+        search_bar_layout = QHBoxLayout()
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search providers by name, specialty, or organization...")
+        self.search_edit.textChanged.connect(self.filter_providers)
+        search_bar_layout.addWidget(self.search_edit)
+        
+        # Specialty filter
+        self.specialty_filter_combo = QComboBox()
+        self.specialty_filter_combo.addItem("All Specialties")
+        self.specialty_filter_combo.currentTextChanged.connect(self.filter_providers)
+        search_bar_layout.addWidget(self.specialty_filter_combo)
+        
+        # Emergency filter
+        self.emergency_filter_checkbox = QCheckBox("Emergency Contacts Only")
+        self.emergency_filter_checkbox.stateChanged.connect(self.filter_providers)
+        search_bar_layout.addWidget(self.emergency_filter_checkbox)
+        
+        search_layout.addLayout(search_bar_layout)
+        layout.addWidget(search_group)
+        
+        # Providers table
+        table_group = QGroupBox("👩‍⚕️ Care Providers")
+        table_layout = QVBoxLayout(table_group)
+        
+        self.providers_table = QTableWidget()
+        self.providers_table.setColumnCount(8)
+        self.providers_table.setHorizontalHeaderLabels([
+            "Name", "Title", "Specialty", "Organization", "Phone", "Email", "Emergency", "Actions"
+        ])
+        self.providers_table.horizontalHeader().setStretchLastSection(True)
+        self.providers_table.setAlternatingRowColors(True)
+        self.providers_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.providers_table.itemDoubleClicked.connect(self.edit_provider)
+        
+        # Apply custom delegate to suppress selection borders
+        from utils.custom_delegates import CleanSelectionDelegate
+        self.providers_table.setItemDelegate(CleanSelectionDelegate())
+        
+        table_layout.addWidget(self.providers_table)
+        layout.addWidget(table_group)
+        
+        # Action buttons
+        action_layout = QHBoxLayout()
+        
+        add_provider_btn = QPushButton("➕ Add Provider")
+        add_provider_btn.clicked.connect(self.add_provider)
+        add_provider_btn.setStyleSheet("background-color: #27ae60; color: white; padding: 8px; border-radius: 3px;")
+        
+        edit_provider_btn = QPushButton("✏️ Edit Provider")
+        edit_provider_btn.clicked.connect(self.edit_provider)
+        edit_provider_btn.setEnabled(False)
+        
+        delete_provider_btn = QPushButton("🗑️ Delete Provider")
+        delete_provider_btn.clicked.connect(self.delete_provider)
+        delete_provider_btn.setEnabled(False)
+        delete_provider_btn.setStyleSheet("background-color: #e74c3c; color: white; padding: 8px; border-radius: 3px;")
+        
+        call_provider_btn = QPushButton("📞 Call")
+        call_provider_btn.clicked.connect(self.call_provider)
+        call_provider_btn.setEnabled(False)
+        
+        email_provider_btn = QPushButton("📧 Email")
+        email_provider_btn.clicked.connect(self.email_provider)
+        email_provider_btn.setEnabled(False)
+        
+        create_appointment_btn = QPushButton("📅 Create Appointment")
+        create_appointment_btn.clicked.connect(self.create_appointment_from_provider)
+        create_appointment_btn.setEnabled(False)
+        
+        refresh_providers_btn = QPushButton("🔄 Refresh")
+        refresh_providers_btn.clicked.connect(self.refresh_providers)
+        
+        action_layout.addWidget(add_provider_btn)
+        action_layout.addWidget(edit_provider_btn)
+        action_layout.addWidget(delete_provider_btn)
+        action_layout.addStretch()
+        action_layout.addWidget(call_provider_btn)
+        action_layout.addWidget(email_provider_btn)
+        action_layout.addWidget(create_appointment_btn)
+        action_layout.addStretch()
+        action_layout.addWidget(refresh_providers_btn)
+        
+        layout.addLayout(action_layout)
+        
+        # Connect selection changes
+        self.providers_table.selectionModel().selectionChanged.connect(
+            lambda: self.update_provider_buttons(edit_provider_btn, delete_provider_btn, 
+                                               call_provider_btn, email_provider_btn, create_appointment_btn)
         )
-        roww("Items", ttk.Entry(frm, textvariable=sv["items"], width=50))
-        roww(
-            "Risk",
-            ttk.Combobox(frm, textvariable=sv["risk"], values=RISK_OPTS, state="readonly", width=8),
-        )
-        roww("Onset (min)", ttk.Entry(frm, textvariable=sv["onset_min"], width=6))
-        roww("Severity (0-10)", ttk.Entry(frm, textvariable=sv["severity"], width=6))
-        roww(
-            "Bristol",
-            ttk.Combobox(
-                frm, textvariable=sv["stool_label"], values=BRS_VALUES, state="readonly", width=44
-            ),
-        )
-        roww(
-            "Recipe",
-            ttk.Combobox(frm, textvariable=sv["recipe"], values=self._recipe_titles(), width=30),
-        )
-        roww("Symptoms", ttk.Entry(frm, textvariable=sv["symptoms"], width=60))
-        roww("Notes", ttk.Entry(frm, textvariable=sv["notes"], width=60))
-
-        out: dict[str, Any] = {}
-
-        def on_save():
-            out.update(
-                {
-                    "date": (sv["date"].get() or "").strip(),
-                    "time": (sv["time"].get() or "").strip(),
-                    "meal": (sv["meal"].get() or "").strip(),
-                    "items": (sv["items"].get() or "").strip(),
-                    "risk": (sv["risk"].get() or "").strip(),
-                    "onset_min": int((sv["onset_min"].get() or "0").strip() or 0),
-                    "severity": int((sv["severity"].get() or "0").strip() or 0),
-                    "stool": bristol_code(sv["stool_label"].get()),
-                    "recipe": (sv["recipe"].get() or "").strip(),
-                    "symptoms": (sv["symptoms"].get() or "").strip(),
-                    "notes": (sv["notes"].get() or "").strip(),
-                }
+        
+        self.tab_widget.addTab(providers_widget, "👩‍⚕️ Care Providers")
+        
+        # Load initial data
+        self.refresh_providers()
+    
+    def update_provider_buttons(self, edit_btn, delete_btn, call_btn, email_btn, appointment_btn):
+        """Update provider action buttons based on selection"""
+        has_selection = len(self.providers_table.selectedItems()) > 0
+        edit_btn.setEnabled(has_selection)
+        delete_btn.setEnabled(has_selection)
+        call_btn.setEnabled(has_selection)
+        email_btn.setEnabled(has_selection)
+        appointment_btn.setEnabled(has_selection)
+    
+    def add_provider(self):
+        """Add new care provider"""
+        if not self.care_provider_service:
+            QMessageBox.warning(self, "Error", "Care provider service is not available.")
+            return
+            
+        dialog = CareProviderDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            provider_data = dialog.get_provider_data()
+            if provider_data['name']:  # Basic validation
+                success = self.care_provider_service.add_provider(provider_data)
+                if success:
+                    QMessageBox.information(self, "Success", "Care provider added successfully!")
+                    self.refresh_providers()
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to add care provider.")
+            else:
+                QMessageBox.warning(self, "Validation Error", "Provider name is required.")
+    
+    def edit_provider(self):
+        """Edit selected care provider"""
+        if not self.care_provider_service:
+            QMessageBox.warning(self, "Error", "Care provider service is not available.")
+            return
+            
+        selected_row = self.providers_table.currentRow()
+        if selected_row < 0:
+            return
+        
+        provider_id = self.providers_table.item(selected_row, 0).data(Qt.UserRole)
+        provider = self.care_provider_service.get_provider(provider_id)
+        
+        if provider:
+            dialog = CareProviderDialog(self, provider)
+            if dialog.exec() == QDialog.Accepted:
+                provider_data = dialog.get_provider_data()
+                success = self.care_provider_service.update_provider(provider_id, provider_data)
+                if success:
+                    QMessageBox.information(self, "Success", "Care provider updated successfully!")
+                    self.refresh_providers()
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to update care provider.")
+    
+    def delete_provider(self):
+        """Delete selected care provider"""
+        selected_row = self.providers_table.currentRow()
+        if selected_row < 0:
+            return
+        
+        provider_id = self.providers_table.item(selected_row, 0).data(Qt.UserRole)
+        provider_name = self.providers_table.item(selected_row, 0).text()
+        
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                   f"Are you sure you want to delete {provider_name}?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            success = self.care_provider_service.delete_provider(provider_id)
+            if success:
+                QMessageBox.information(self, "Success", "Care provider deleted successfully!")
+                self.refresh_providers()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to delete care provider.")
+    
+    def call_provider(self):
+        """Call selected care provider"""
+        selected_row = self.providers_table.currentRow()
+        if selected_row < 0:
+            return
+        
+        provider_id = self.providers_table.item(selected_row, 0).data(Qt.UserRole)
+        provider = self.care_provider_service.get_provider(provider_id)
+        
+        if provider and provider.phone:
+            success = self.care_provider_service.contact_provider(provider, "phone")
+            if not success:
+                QMessageBox.warning(self, "Error", "Failed to initiate phone call.")
+        else:
+            QMessageBox.information(self, "No Phone", "No phone number available for this provider.")
+    
+    def email_provider(self):
+        """Email selected care provider"""
+        selected_row = self.providers_table.currentRow()
+        if selected_row < 0:
+            return
+        
+        provider_id = self.providers_table.item(selected_row, 0).data(Qt.UserRole)
+        provider = self.care_provider_service.get_provider(provider_id)
+        
+        if provider and provider.email:
+            success = self.care_provider_service.contact_provider(provider, "email")
+            if not success:
+                QMessageBox.warning(self, "Error", "Failed to open email client.")
+        else:
+            QMessageBox.information(self, "No Email", "No email address available for this provider.")
+    
+    def create_appointment_from_provider(self):
+        """Create appointment with selected care provider"""
+        selected_row = self.providers_table.currentRow()
+        if selected_row < 0:
+            return
+        
+        provider_id = self.providers_table.item(selected_row, 0).data(Qt.UserRole)
+        provider = self.care_provider_service.get_provider(provider_id)
+        
+        if provider:
+            # Create appointment data
+            appointment_data = {
+                'title': f"Appointment with {provider.title} {provider.name}",
+                'description': f"Healthcare appointment with {provider.specialty}",
+                'start_time': '',  # Will be filled by calendar
+                'end_time': '',    # Will be filled by calendar
+                'category': 'healthcare'
+            }
+            
+            success = self.care_provider_service.create_appointment_from_provider(provider, appointment_data)
+            if success:
+                QMessageBox.information(self, "Success", 
+                                      f"Appointment created for {provider.name}. Please check the Calendar panel to set the date and time.")
+            else:
+                QMessageBox.warning(self, "Error", "Failed to create appointment.")
+    
+    def filter_providers(self):
+        """Filter providers based on search criteria"""
+        search_term = self.search_edit.text().strip()
+        specialty_filter = self.specialty_filter_combo.currentText()
+        emergency_only = self.emergency_filter_checkbox.isChecked()
+        
+        # Get filtered providers
+        if search_term:
+            providers = self.care_provider_service.search_providers(search_term)
+        else:
+            providers = self.care_provider_service.get_providers(
+                specialty_filter if specialty_filter != "All Specialties" else None,
+                emergency_only
             )
-            dlg.destroy()
-
-        btns = ttk.Frame(dlg, padding=(8, 6))
-        btns.grid(row=1, column=0, sticky="e")
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(btns, text="Save", command=on_save).grid(row=0, column=1)
-        dlg.wait_window()
-        return out or None
+        
+        self.update_providers_table(providers)
+    
+    def refresh_providers(self):
+        """Refresh providers list and statistics"""
+        if not self.care_provider_service:
+            print("Care provider service is not available.")
+            return
+            
+        # Update specialty filter
+        specialties = self.care_provider_service.get_specialties()
+        self.specialty_filter_combo.clear()
+        self.specialty_filter_combo.addItem("All Specialties")
+        self.specialty_filter_combo.addItems(specialties)
+        
+        # Update statistics
+        stats = self.care_provider_service.get_provider_statistics()
+        self.total_providers_label.setText(f"Total Providers: {stats.get('total_providers', 0)}")
+        self.emergency_providers_label.setText(f"Emergency Contacts: {stats.get('emergency_providers', 0)}")
+        self.specialties_count_label.setText(f"Specialties: {len(stats.get('specialty_counts', {}))}")
+        
+        # Update table
+        providers = self.care_provider_service.get_providers()
+        self.update_providers_table(providers)
+    
+    def update_providers_table(self, providers: List[CareProviderData]):
+        """Update the providers table with given providers"""
+        self.providers_table.setRowCount(len(providers))
+        
+        for row, provider in enumerate(providers):
+            # Name (with provider_id as user data)
+            name_item = QTableWidgetItem(f"{provider.title} {provider.name}".strip())
+            name_item.setData(Qt.UserRole, provider.provider_id)
+            self.providers_table.setItem(row, 0, name_item)
+            
+            # Title
+            self.providers_table.setItem(row, 1, QTableWidgetItem(provider.title))
+            
+            # Specialty
+            self.providers_table.setItem(row, 2, QTableWidgetItem(provider.specialty))
+            
+            # Organization
+            self.providers_table.setItem(row, 3, QTableWidgetItem(provider.organization))
+            
+            # Phone
+            phone_item = QTableWidgetItem(provider.phone or "")
+            if provider.phone:
+                phone_item.setToolTip(f"Click to call: {provider.phone}")
+            self.providers_table.setItem(row, 4, phone_item)
+            
+            # Email
+            email_item = QTableWidgetItem(provider.email or "")
+            if provider.email:
+                email_item.setToolTip(f"Click to email: {provider.email}")
+            self.providers_table.setItem(row, 5, email_item)
+            
+            # Emergency
+            emergency_item = QTableWidgetItem("🚨" if provider.emergency_contact else "")
+            self.providers_table.setItem(row, 6, emergency_item)
+            
+            # Actions
+            actions_item = QTableWidgetItem("📞 📧 📅")
+            actions_item.setToolTip("Call, Email, Create Appointment")
+            self.providers_table.setItem(row, 7, actions_item)
+    
+    # Signal handlers
+    def on_provider_added(self, provider: CareProviderData):
+        """Handle provider added signal"""
+        self.refresh_providers()
+    
+    def on_provider_updated(self, provider: CareProviderData):
+        """Handle provider updated signal"""
+        self.refresh_providers()
+    
+    def on_provider_deleted(self, provider_id: str):
+        """Handle provider deleted signal"""
+        self.refresh_providers()
+    
+    def on_appointment_created(self, appointment_data: Dict[str, Any]):
+        """Handle appointment created signal"""
+        # This could trigger a refresh of the calendar panel
+        QMessageBox.information(self, "Appointment Created", 
+                              f"Appointment '{appointment_data.get('title', '')}' created successfully!")
+    
+    # Existing health logging methods (simplified for brevity)
+    def save_entry(self):
+        """Save health log entry"""
+        try:
+            if self._save_entry_to_database():
+                QMessageBox.information(self, "Success", "Health log entry saved successfully!")
+                self.clear_form()
+                self.load_health_entries()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to save entry to database.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save entry: {str(e)}")
+    
+    def clear_form(self):
+        """Clear the form"""
+        self.date_edit.setDate(QDate.currentDate())
+        self.items_edit.clear()
+        self.risk_combo.setCurrentIndex(0)
+        self.onset_spin.setValue(0)
+        self.severity_spin.setValue(0)
+        self.symptoms_edit.clear()
+        self.bristol_buttons[3].setChecked(True)  # Default to type 4
+        self.hydration_spin.setValue(0)
+        self.fiber_spin.setValue(0)
+        self.mood_combo.setCurrentIndex(0)
+        self.energy_slider.setValue(5)
+        self.notes_edit.clear()
+    
+    def analyze_patterns(self):
+        """Analyze health patterns and correlations"""
+        QMessageBox.information(self, "Pattern Analysis", "Health pattern analysis feature coming soon!")
+    
+    def export_health_data(self):
+        """Export health data to file"""
+        QMessageBox.information(self, "Export", "Health data export feature coming soon!")
+    
+    def import_health_data(self):
+        """Import health data from file"""
+        QMessageBox.information(self, "Import", "Health data import feature coming soon!")
+    
+    def bulk_add_entries(self):
+        """Bulk add health entries"""
+        QMessageBox.information(self, "Bulk Add", "Bulk add feature coming soon!")
+    
+    def refresh(self):
+        """Refresh panel data"""
+        self.load_health_entries()
+        self.refresh_providers()
+    
+    def load_health_entries(self):
+        """Load health log entries from database"""
+        try:
+            from utils.db import get_connection
+            
+            db = get_connection()
+            cursor = db.cursor()
+            cursor.execute("""
+                SELECT date, time, meal_type, items, risk,
+                       onset_min, severity, symptoms, stool,
+                       hydration_liters, fiber_grams, mood, energy_level, notes
+                FROM health_log 
+                ORDER BY date DESC, time DESC 
+                LIMIT 100
+            """)
+            entries = cursor.fetchall()
+            
+            # Clear existing data
+            self.entries_table.setRowCount(len(entries))
+            
+            for row, entry in enumerate(entries):
+                date, time, meal_type, items, risk, onset_min, severity, symptoms, stool, hydration_liters, fiber_grams, mood, energy_level, notes = entry
+                
+                # Populate table
+                self.entries_table.setItem(row, 0, QTableWidgetItem(date or ""))
+                self.entries_table.setItem(row, 1, QTableWidgetItem(time or ""))
+                self.entries_table.setItem(row, 2, QTableWidgetItem(meal_type or ""))
+                self.entries_table.setItem(row, 3, QTableWidgetItem(items or ""))
+                self.entries_table.setItem(row, 4, QTableWidgetItem(risk or ""))
+                self.entries_table.setItem(row, 5, QTableWidgetItem(str(severity) if severity else ""))
+                self.entries_table.setItem(row, 6, QTableWidgetItem(symptoms or ""))
+            
+            # If no entries in database, show message
+            if len(entries) == 0:
+                self.entries_table.setRowCount(1)
+                self.entries_table.setItem(0, 0, QTableWidgetItem("No health log entries found"))
+                self.entries_table.setItem(0, 1, QTableWidgetItem("Add your first entry using the form above"))
+                
+        except Exception as e:
+            print(f"Error loading health log entries from database: {e}")
+            # Show error message
+            self.entries_table.setRowCount(1)
+            self.entries_table.setItem(0, 0, QTableWidgetItem("Error loading entries"))
+            self.entries_table.setItem(0, 1, QTableWidgetItem(str(e)))
+    
+    def _save_entry_to_database(self):
+        """Save health log entry to database"""
+        try:
+            from utils.db import get_connection
+            
+            db = get_connection()
+            cursor = db.cursor()
+            
+            # Get form data
+            date = self.date_edit.date().toString("yyyy-MM-dd")
+            time = self.time_combo.currentText()
+            meal_type = self.meal_combo.currentText()
+            food_items = self.items_edit.toPlainText().strip()
+            gluten_risk = self.risk_combo.currentText()
+            onset_time = self.onset_spin.value()
+            severity = self.severity_spin.value()
+            symptoms = self.symptoms_edit.toPlainText().strip()
+            
+            # Get Bristol type
+            bristol_type = None
+            for i, button in enumerate(self.bristol_buttons):
+                if button.isChecked():
+                    bristol_type = i + 1
+                    break
+            
+            hydration_level = self.hydration_spin.value()
+            fiber_intake = self.fiber_spin.value()
+            mood = self.mood_combo.currentText()
+            energy_level = self.energy_slider.value()
+            notes = self.notes_edit.toPlainText().strip()
+            
+            # Insert entry
+            cursor.execute("""
+                INSERT INTO health_log (date, time, meal_type, items, risk,
+                                      onset_min, severity, symptoms, stool,
+                                      hydration_liters, fiber_grams, mood, energy_level, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                date, time, meal_type, food_items, gluten_risk,
+                onset_time, severity, symptoms, bristol_type,
+                hydration_level, fiber_intake, mood, energy_level, notes
+            ))
+            
+            db.commit()
+            return True
+            
+        except Exception as e:
+            print(f"Error saving health log entry to database: {e}")
+            return False

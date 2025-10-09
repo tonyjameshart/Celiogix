@@ -1,0 +1,34 @@
+{
+  "name": "High Contrast",
+  "description": "High contrast theme for accessibility",
+  "colors": {
+    "primary": "#000000",
+    "primary_dark": "#000000",
+    "primary_light": "#666666",
+    "secondary": "#ff0000",
+    "background": "#ffffff",
+    "surface": "#ffffff",
+    "surface_variant": "#f0f0f0",
+    "text_primary": "#000000",
+    "text_secondary": "#333333",
+    "text_disabled": "#999999",
+    "error": "#ff0000",
+    "border": "#000000",
+    "title_background": "#ffffff",
+    "tab_background": "#ffffff",
+    "tab_selected": "#f0f0f0",
+    "menubar_background": "#ffffff",
+    "menubar_text": "#000000"
+  },
+  "typography": {
+    "font_family": "Arial",
+    "font_size": 12,
+    "header_size": 18,
+    "button_font_size": 14
+  },
+  "components": {
+    "border_radius": 2,
+    "padding": 12,
+    "spacing": 15
+  }
+}

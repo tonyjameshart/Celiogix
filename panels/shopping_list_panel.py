@@ -1,491 +1,1045 @@
-# panels/shopping_list_panel.py
-from __future__ import annotations
+# path: panels/shopping_list_panel_pyside6.py
+"""
+Shopping List Panel for PySide6 Application
+"""
 
-import re
-import sqlite3
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, filedialog
-from typing import Any
+from typing import Optional
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
+    QLineEdit, QTextEdit, QComboBox, QTableWidget,
+    QTableWidgetItem, QHeaderView, QGroupBox, QMessageBox, QDialog, QRadioButton, QButtonGroup
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 
 from panels.base_panel import BasePanel
-from utils.export import export_table_html  # ensure this exists in your project
+from panels.context_menu_mixin import ShoppingListContextMenuMixin
 
 
-COLS = [
-    ("purchased", "✓", 32, "c"),
-    ("name", "Item", 260, "w"),
-    ("brand", "Brand", 120, "w"),
-    ("category", "Category", 120, "w"),
-    ("store", "Store", 100, "w"),
-    ("net_weight", "Size", 80, "c"),
-    ("thresh", "Qty", 60, "c"),
-    ("notes", "Notes", 260, "w"),
-]
+class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
+    """Shopping list panel for PySide6"""
+    
+    def __init__(self, master=None, app=None):
+        super().__init__(master, app)
+    
+    def setup_ui(self):
+        """Set up the shopping list panel UI"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        # Add item section
+        add_layout = QHBoxLayout()
+        self.item_input = QLineEdit()
+        self.item_input.setPlaceholderText("Enter item to add...")
+        self.item_input.returnPressed.connect(self.add_item)
+        add_layout.addWidget(QLabel("Add Item:"))
+        add_layout.addWidget(self.item_input)
+        
+        self.quantity_input = QLineEdit()
+        self.quantity_input.setPlaceholderText("Qty")
+        self.quantity_input.setMaximumWidth(80)
+        add_layout.addWidget(QLabel("Qty:"))
+        add_layout.addWidget(self.quantity_input)
+        
+        self.store_combo = QComboBox()
+        self.store_combo.addItems([
+            "Grocery Store",
+            "Health Food Store", 
+            "Farmers Market",
+            "Bulk Store",
+            "Online Order",
+            "Specialty Store",
+            "Other"
+        ])
+        add_layout.addWidget(QLabel("Store:"))
+        add_layout.addWidget(self.store_combo)
+        
+        self.category_combo = QComboBox()
+        self.category_combo.addItems([
+            "Produce", "Meat & Seafood", "Dairy & Eggs", "Pantry", 
+            "Frozen", "Bakery (GF)", "Beverages", "Health & Beauty", "Other"
+        ])
+        add_layout.addWidget(QLabel("Category:"))
+        add_layout.addWidget(self.category_combo)
+        
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self.add_item)
+        add_layout.addWidget(add_btn)
+        
+        main_layout.addLayout(add_layout)
+        
+        # Store filter and organization
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter by Store:"))
+        self.store_filter = QComboBox()
+        self.store_filter.addItems(["All Stores", "Grocery Store", "Health Food Store", "Farmers Market", "Bulk Store", "Online Order", "Specialty Store", "Other"])
+        self.store_filter.currentTextChanged.connect(self.filter_by_store)
+        filter_layout.addWidget(self.store_filter)
+        
+        organize_btn = QPushButton("Organize by Store")
+        organize_btn.clicked.connect(self.organize_by_store)
+        filter_layout.addWidget(organize_btn)
+        
+        filter_layout.addStretch()
+        main_layout.addLayout(filter_layout)
+        
+        # Shopping list table
+        self.shopping_table = QTableWidget()
+        self.shopping_table.setColumnCount(5)
+        self.shopping_table.setHorizontalHeaderLabels(["Store", "Item", "Quantity", "Category", "Purchased"])
+        
+        # Set up auto-sizing columns with minimum width
+        header = self.shopping_table.horizontalHeader()
+        header.setStretchLastSection(False)  # Disable stretch last section
+        
+        # Set resize mode to auto-size based on content with minimum width
+        for col in range(5):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+            # Set minimum width to 20% of table width
+            header.setMinimumSectionSize(int(self.shopping_table.width() * 0.2) if self.shopping_table.width() > 0 else 100)
+        
+        self.shopping_table.setAlternatingRowColors(True)
+        self.shopping_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.shopping_table.itemChanged.connect(self.on_item_changed)
+        
+        # Apply custom delegate to suppress selection borders
+        from utils.custom_delegates import CleanSelectionDelegate
+        self.shopping_table.setItemDelegate(CleanSelectionDelegate())
+        
+        # Apply same styling as pantry table
+        self.shopping_table.setStyleSheet("""
+            QTableWidget::item {
+                padding: 6px;
+                border: none;          /* no cell border */
+            }
+            QTableWidget::item:selected {
+                background-color: #e3f2fd;    /* visible selected background */
+                color: #1976d2;               /* selected text color */
+                /* no border here */
+            }
+        """)
+        
+        # Connect resize event to update minimum section sizes
+        self.shopping_table.resizeEvent = self.on_table_resize
+        
+        main_layout.addWidget(self.shopping_table)
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        self.remove_btn = QPushButton("Remove Item")
+        self.remove_btn.clicked.connect(self.remove_item)
+        self.remove_btn.setEnabled(False)
+        
+        self.clear_btn = QPushButton("Clear All")
+        self.clear_btn.clicked.connect(self.clear_all)
+        
+        self.print_btn = QPushButton("Print List")
+        self.print_btn.clicked.connect(self.print_list)
+        
+        self.export_btn = QPushButton("Export List")
+        self.export_btn.clicked.connect(self.export_shopping_list)
+        
+        self.import_btn = QPushButton("Import List")
+        self.import_btn.clicked.connect(self.import_shopping_list)
+        
+        button_layout.addWidget(self.remove_btn)
+        button_layout.addWidget(self.clear_btn)
+        button_layout.addWidget(self.export_btn)
+        button_layout.addWidget(self.import_btn)
+        button_layout.addWidget(self.print_btn)
+        button_layout.addStretch()
+        
+        main_layout.addLayout(button_layout)
+        
+        # Connect selection changes
+        self.shopping_table.selectionModel().selectionChanged.connect(self.on_selection_changed)
+        
+        # Load initial data
+        self.load_shopping_list()
 
-
-class ShoppingListPanel(BasePanel):
-    def __init__(self, master, app, **kw):
-        self.tree: ttk.Treeview | None = None
-        self._hide_purchased: tk.BooleanVar | None = None
-        super().__init__(master, app, **kw)
-
-    def build(self) -> None:
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-        self._ensure_purchased_column()
-
-        wrap = ttk.Frame(self, padding=6)
-        wrap.grid(row=0, column=0, sticky="nsew")
-        wrap.grid_rowconfigure(1, weight=1)
-        wrap.grid_columnconfigure(0, weight=1)
-
-        bar = ttk.Frame(wrap)
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ttk.Button(bar, text="Add…", command=self.add_item).pack(side="left")
-        ttk.Button(bar, text="Edit", command=self.edit_selected).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Delete", command=self.delete_selected).pack(side="left", padx=(6, 0))
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(bar, text="Add from Recipe…", command=self.add_from_recipe).pack(side="left")
-        ttk.Button(bar, text="Add from Recipes…", command=self.add_from_multiple_recipes).pack(side="left", padx=(6,0))
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(bar, text="Mark Purchased", command=self.mark_selected_purchased).pack(side="left")
-        ttk.Button(bar, text="Unmark Purchased", command=self.unmark_selected_purchased).pack(side="left", padx=(6,0))
-        self._hide_purchased = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="Hide purchased", variable=self._hide_purchased, command=self.refresh_list).pack(side="left", padx=(12,0))
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(bar, text="Copy", command=self.copy_visible_to_clipboard).pack(side="left")
-        ttk.Button(bar, text="Open HTML", command=lambda: self.export_visible_html(open_after=True)).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Print", command=lambda: self.export_visible_html(open_after=True, invoke_print=True)).pack(side="left", padx=(6, 0))
-        ttk.Button(bar, text="Fit Columns", command=lambda: self.fit_columns_now(self.tree, exact=True, max_px_map={"notes": 1200})).pack(side="left", padx=(12, 0))
-
-        wrap_tv, tv, vsb, hsb = self.make_scrolling_tree(wrap, [c[0] for c in COLS])
-        for key, hdr, width, align in COLS:
-            tv.heading(key, text=hdr)
-            tv.column(key, width=width, anchor={"w": "w", "e": "e", "c": "center"}.get(align, "w"), stretch=False)
-        wrap_tv.grid(row=1, column=0, sticky="nsew")
-        self.tree = tv
-
-        tv.bind("<Double-1>", lambda _e: self.edit_selected())
-
-        m = tk.Menu(self, tearoff=0)
-        m.add_command(label="Add…", command=self.add_item)
-        m.add_command(label="Edit…", command=self.edit_selected)
-        m.add_command(label="Delete", command=self.delete_selected)
-        m.add_separator()
-        m.add_command(label="Add from Recipe…", command=self.add_from_recipe)
-        m.add_command(label="Add from Recipes…", command=self.add_from_multiple_recipes)
-        m.add_separator()
-        m.add_command(label="Mark Purchased", command=self.mark_selected_purchased)
-        m.add_command(label="Unmark Purchased", command=self.unmark_selected_purchased)
-        m.add_separator()
-        m.add_command(label="Copy", command=self.copy_visible_to_clipboard)
-        m.add_command(label="Open HTML", command=lambda: self.export_visible_html(open_after=True))
-        m.add_command(label="Print", command=lambda: self.export_visible_html(open_after=True, invoke_print=True))
-        m.add_separator()
-        m.add_command(label="Fit Columns", command=lambda: self.fit_columns_now(self.tree, exact=True, max_px_map={"notes": 1200}))
-        tv.bind("<Button-3>", lambda e, menu=m: self._popup_menu(e, menu))
-
-        self.refresh_list()
-        self.after(0, lambda: self.fit_columns_now(self.tree, exact=True, max_px_map={"notes": 1200}))
-
-    def _ensure_purchased_column(self) -> None:
+    def refresh(self):
+        """Refresh panel data"""
+        self.load_shopping_list()
+    
+    def load_shopping_list(self):
+        """Load shopping list from database"""
         try:
-            cols = {r[1] for r in self.db.execute("PRAGMA table_info(shopping_list)").fetchall()}
-            if "purchased" not in cols:
-                self.db.execute("ALTER TABLE shopping_list ADD COLUMN purchased INTEGER NOT NULL DEFAULT 0")
-                self.db.commit()
-        except Exception:
-            pass
-
-    def refresh_list(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        for iid in tv.get_children():
-            tv.delete(iid)
-
-        hide = bool(self._hide_purchased.get()) if isinstance(self._hide_purchased, tk.BooleanVar) else False
-        where_clause = "WHERE purchased=0" if hide else ""
-        rows = self.db.execute(
-            f"""
-            SELECT id, name, brand, category, store,
-                   COALESCE(net_weight, '') AS net_weight,
-                   COALESCE(thresh, '')     AS thresh,
-                   COALESCE(notes, '')      AS notes,
-                   IFNULL(purchased,0)      AS purchased
-              FROM shopping_list
-             {where_clause}
-             ORDER BY LOWER(COALESCE(category,'')), LOWER(COALESCE(name,''))
-            """
-        ).fetchall()
-        for r in rows:
-            tick = "✓" if r["purchased"] else ""
-            tv.insert(
-                "",
-                "end",
-                iid=str(r["id"]),
-                values=[tick, r["name"], r["brand"], r["category"], r["store"], r["net_weight"], r["thresh"], r["notes"]],
-            )
-        self.set_status(f"{len(rows)} item(s)")
-
-    def add_item(self) -> None:
-        data = self._item_dialog(None)
-        if not data:
-            return
-        self.db.execute(
-            """
-            INSERT INTO shopping_list(name, brand, category, store, net_weight, thresh, notes, purchased)
-            VALUES(?,?,?,?,?,?,?,?)
-            """,
-            (data["name"], data["brand"], data["category"], data["store"], data["net_weight"], data["thresh"], data["notes"], 0),
-        )
-        self.db.commit()
-        self.refresh_list()
-
-    def edit_selected(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if len(sel) != 1:
-            messagebox.showinfo("Shopping List", "Select one row to edit.", parent=self.winfo_toplevel())
-            return
-        sid = int(sel[0])
-        r = self.db.execute(
-            """
-            SELECT id, name, brand, category, store,
-                   COALESCE(net_weight,'') AS net_weight,
-                   COALESCE(thresh,'')     AS thresh,
-                   COALESCE(notes,'')      AS notes,
-                   IFNULL(purchased,0)     AS purchased
-              FROM shopping_list WHERE id=?
-            """,
-            (sid,),
-        ).fetchone()
-        if not r:
-            return
-        data = self._item_dialog(r)
-        if not data:
-            return
-        self.db.execute(
-            """
-            UPDATE shopping_list
-               SET name=?, brand=?, category=?, store=?, net_weight=?, thresh=?, notes=?
-             WHERE id=?
-            """,
-            (data["name"], data["brand"], data["category"], data["store"], data["net_weight"], data["thresh"], data["notes"], sid),
-        )
-        self.db.commit()
-        self.refresh_list()
-
-    def delete_selected(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if not sel:
-            return
-        if not self.confirm_delete(len(sel)):
-            return
-        ids = [int(i) for i in sel]
-        q = ",".join("?" for _ in ids)
-        self.db.execute(f"DELETE FROM shopping_list WHERE id IN ({q})", ids)
-        self.db.commit()
-        self.refresh_list()
-
-    def mark_selected_purchased(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if not sel:
-            return
-        ids = [int(i) for i in sel]
-        q = ",".join("?" for _ in ids)
-        self.db.execute(f"UPDATE shopping_list SET purchased=1 WHERE id IN ({q})", ids)
-        self.db.commit()
-        self.refresh_list()
-
-    def unmark_selected_purchased(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        sel = tv.selection()
-        if not sel:
-            return
-        ids = [int(i) for i in sel]
-        q = ",".join("?" for _ in ids)
-        self.db.execute(f"UPDATE shopping_list SET purchased=0 WHERE id IN ({q})", ids)
-        self.db.commit()
-        self.refresh_list()
-
-    def add_from_recipe(self) -> None:
-        r = self._pick_recipe()
-        if not r:
-            return
-        ingredients = (r.get("ingredients") or "").strip()
-        if not ingredients:
-            messagebox.showinfo("Shopping List", "Recipe has no ingredients.", parent=self.winfo_toplevel())
-            return
-        lines = [ln for ln in (ingredients.replace("\r\n", "\n").split("\n")) if ln.strip()]
-        count = 0
-        for raw in lines:
-            name = self._normalize_ingredient(raw)
-            if not name:
-                continue
-            self.db.execute(
-                """
-                INSERT INTO shopping_list(name, brand, category, store, net_weight, thresh, notes, purchased)
-                VALUES(?,?,?,?,?,?,?,?)
-                """,
-                (name, "", "", "", "", "", f"from recipe: {r.get('title','')}", 0),
-            )
-            count += 1
-        if count:
-            self.db.commit()
-            self.refresh_list()
-            self.set_status(f"Added {count} item(s) from recipe")
-
-    def add_from_multiple_recipes(self) -> None:
-        choices = self.db.execute("SELECT id, title, COALESCE(ingredients,'') AS ingredients FROM recipes ORDER BY LOWER(title)").fetchall()
-        if not choices:
-            messagebox.showinfo("Recipes", "No recipes found.", parent=self.winfo_toplevel()); return
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Select recipes to import ingredients from")
-        dlg.transient(self.winfo_toplevel()); dlg.grab_set()
-        frm = ttk.Frame(dlg, padding=8); frm.grid(row=0, column=0, sticky="nsew")
-        dlg.grid_rowconfigure(0, weight=1); dlg.grid_columnconfigure(0, weight=1)
-        lb_frame = ttk.Frame(frm); lb_frame.grid(row=0, column=0, sticky="nsew")
-        sv = tk.StringVar()
-        ttk.Entry(frm, textvariable=sv).grid(row=1, column=0, sticky="ew", pady=(6,0))
-        listbox = tk.Listbox(lb_frame, selectmode="multiple", width=60, height=18)
-        listbox.grid(row=0, column=0, sticky="nsew")
-        sby = ttk.Scrollbar(lb_frame, orient="vertical", command=listbox.yview); sby.grid(row=0, column=1, sticky="ns")
-        listbox.configure(yscrollcommand=sby.set)
-        items = [(r["id"], r["title"], r["ingredients"]) for r in choices]
-
-        def populate(filter_q=""):
-            listbox.delete(0, "end")
-            for rid, title, _ing in items:
-                if not filter_q or filter_q.lower() in title.lower():
-                    listbox.insert("end", f"{rid:>4}  {title}")
-        populate()
-
-        def on_filter(_e=None):
-            populate(sv.get().strip())
-        sv.trace_add("write", lambda *a: on_filter())
-
-        # capture selection before destroying dialog
-        selected_indices: list[int] = []
-
-        def on_ok():
-            nonlocal selected_indices
-            sel = listbox.curselection()
-            selected_indices = list(sel)
-            dlg.destroy()
-
-        btns = ttk.Frame(frm); btns.grid(row=2, column=0, sticky="e", pady=(6,0))
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).grid(row=0, column=0, padx=(0,6))
-        ttk.Button(btns, text="Import Selected", command=on_ok).grid(row=0, column=1)
-        dlg.wait_window()
-
-        if not selected_indices:
-            return
-
-        q = sv.get().strip().lower()
-        filtered = [(rid, title, ing) for rid, title, ing in items if not q or q in title.lower()]
-        selected_rows = [filtered[i] for i in selected_indices if 0 <= i < len(filtered)]
-
-        count = 0
-        for rid, title, ingredients in selected_rows:
-            lines = [ln for ln in (ingredients.replace("\r\n", "\n").split("\n")) if ln.strip()]
-            for raw in lines:
-                name = self._normalize_ingredient(raw)
-                if not name:
-                    continue
-                self.db.execute(
-                    """
-                    INSERT INTO shopping_list(name, brand, category, store, net_weight, thresh, notes, purchased)
-                    VALUES(?,?,?,?,?,?,?,?)
-                    """,
-                    (name, "", "", "", "", "", f"from recipe: {title}", 0),
-                )
-                count += 1
-        if count:
-            self.db.commit()
-            self.refresh_list()
-            self.set_status(f"Imported {count} item(s) from {len(selected_rows)} recipe(s)")
-
-    def _normalize_ingredient(self, s: str) -> str:
-        s = s.strip()
-        s = re.sub(r"^\s*[-*•]\s*", "", s)
-        s = re.sub(r"^\d+([\/.]\d+)?\s*(cups?|tsp|tbsp|tablespoons?|teaspoons?|pounds?|lbs?|oz|ounces?|grams?|g|kg|ml|l)\b\.?,?\s*", "", s, flags=re.I)
-        s = re.sub(r"^\d+([\/.]\d+)?\s+", "", s)
-        return s.strip()
-
-    def _pick_recipe(self) -> dict[str, Any] | None:
-        rows = self.db.execute("SELECT id, title, COALESCE(ingredients,'') AS ingredients FROM recipes ORDER BY LOWER(title)").fetchall()
-        if not rows:
-            messagebox.showinfo("Recipes", "No recipes found.", parent=self.winfo_toplevel()); return None
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Choose a recipe")
-        dlg.transient(self.winfo_toplevel())
-        dlg.grab_set()
-        dlg.resizable(True, True)
-        dlg.geometry("520x380")
-
-        frm = ttk.Frame(dlg, padding=8)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.grid_rowconfigure(0, weight=1)
-        dlg.grid_columnconfigure(0, weight=1)
-
-        sv = tk.StringVar()
-        e = ttk.Entry(frm, textvariable=sv)
-        e.grid(row=0, column=0, sticky="ew", pady=(0,6))
-        frm.grid_columnconfigure(0, weight=1)
-
-        lb = tk.Listbox(frm, activestyle="dotbox")
-        lb.grid(row=1, column=0, sticky="nsew")
-        sby = ttk.Scrollbar(frm, orient="vertical", command=lb.yview)
-        lb.configure(yscrollcommand=sby.set)
-        sby.grid(row=1, column=1, sticky="ns")
-
-        data = [(r["id"], r["title"], r["ingredients"]) for r in rows]
-
-        def refresh_listbox():
-            q = (sv.get() or "").lower().strip()
-            lb.delete(0, "end")
-            for rid, title, _ing in data:
-                if not q or q in title.lower():
-                    lb.insert("end", f"{rid:>4}  {title}")
-        refresh_listbox()
-
-        sv.trace_add("write", lambda *a: refresh_listbox())
-
-        selected_index: list[int] = []
-
-        def on_ok_single():
-            nonlocal selected_index
-            sel = lb.curselection()
-            selected_index = list(sel)
-            dlg.destroy()
-
-        lb.bind("<Double-1>", lambda _e: on_ok_single())
-
-        btns = ttk.Frame(dlg, padding=(0,8))
-        btns.grid(row=2, column=0, sticky="e")
-        ttk.Button(btns, text="Cancel", command=lambda: (dlg.destroy())).grid(row=0, column=0, padx=(0,6))
-        ttk.Button(btns, text="Add ingredients", command=on_ok_single).grid(row=0, column=1)
-
-        dlg.wait_window()
-
-        if not selected_index:
-            return None
-        idx = selected_index[0]
-        q = (sv.get() or "").lower().strip()
-        filtered = [(rid, title, ing) for rid, title, ing in data if not q or q in title.lower()]
-        if idx < 0 or idx >= len(filtered):
-            return None
-        rid, title, ing = filtered[idx]
-        return {"id": rid, "title": title, "ingredients": ing}
-
-    def copy_visible_to_clipboard(self) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        headings = [hdr for _k, hdr, _w, _a in COLS]
-        rows = [headings]
-        for iid in tv.get_children(""):
-            vals = tv.item(iid, "values")
-            rows.append([str(v) for v in vals])
-        tsv = "\n".join(["\t".join(row) for row in rows])
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(tsv)
-            self.set_status("Copied to clipboard")
-        except Exception:
-            messagebox.showinfo("Shopping List", "Failed to access clipboard.", parent=self.winfo_toplevel())
-
-    def export_visible_html(self, *, open_after: bool = True, invoke_print: bool = False) -> None:
-        tv = self.tree
-        if not isinstance(tv, ttk.Treeview):
-            return
-        headings = [hdr for _k, hdr, _w, _a in COLS]
-        rows = [list(tv.item(i, "values")) for i in tv.get_children("")]
-        html_path = export_table_html(
-            path=None,
-            title="Shopping List",
-            columns=headings,
-            rows=rows,
-            subtitle="Celiogix",
-            meta={"Rows": len(rows)},
-            open_after=open_after,
-            extra_head=("<script>window.onload=function(){if(location.hash==='#print'){window.print();}}</script>" if invoke_print else ""),
-        )
-        if invoke_print and open_after and isinstance(html_path, str):
+            from utils.db import get_connection
+            
+            db = get_connection()
+            cursor = db.cursor()
+            
+            # Load shopping list items from database
+            cursor.execute("""
+                SELECT store, name, '1', category, purchased, notes, created_at
+                FROM shopping_list 
+                ORDER BY id DESC
+            """)
+            
+            items = cursor.fetchall()
+            
+            # Clear existing data
+            self.shopping_table.setRowCount(len(items))
+            
+            for row, (store, item_name, quantity, category, purchased, notes, created_at) in enumerate(items):
+                self.shopping_table.setItem(row, 0, QTableWidgetItem(store or ""))
+                self.shopping_table.setItem(row, 1, QTableWidgetItem(item_name or ""))
+                self.shopping_table.setItem(row, 2, QTableWidgetItem(quantity or ""))
+                self.shopping_table.setItem(row, 3, QTableWidgetItem(category or ""))
+                
+                # Create checkbox for purchased column
+                purchased_item = QTableWidgetItem()
+                purchased_item.setCheckState(Qt.Checked if purchased else Qt.Unchecked)
+                purchased_item.setText("Yes" if purchased else "No")
+                self.shopping_table.setItem(row, 4, purchased_item)
+                
+            
+            # If no items in database, add sample items
+            if len(items) == 0:
+                self._load_sample_shopping_items()
+                
+        except Exception as e:
+            print(f"Error loading shopping list from database: {e}")
+            # Fallback to sample items
+            self._load_sample_shopping_items()
+    
+    def _load_sample_shopping_items(self):
+        """Load sample shopping items when database is empty"""
+        sample_items = [
+            ("Health Food Store", "Gluten-Free Bread", "1 loaf", "Bakery (GF)", False),
+            ("Grocery Store", "Almond Milk", "2 cartons", "Dairy & Eggs", False),
+            ("Bulk Store", "Quinoa", "1 bag", "Pantry", False),
+            ("Farmers Market", "Fresh Spinach", "1 bunch", "Produce", True),
+            ("Grocery Store", "Chicken Breast", "2 lbs", "Meat & Seafood", False)
+        ]
+        
+        self.shopping_table.setRowCount(len(sample_items))
+        for row, (store, item, quantity, category, purchased) in enumerate(sample_items):
+            self.shopping_table.setItem(row, 0, QTableWidgetItem(store))
+            self.shopping_table.setItem(row, 1, QTableWidgetItem(item))
+            self.shopping_table.setItem(row, 2, QTableWidgetItem(quantity))
+            self.shopping_table.setItem(row, 3, QTableWidgetItem(category))
+            
+            # Create checkbox for purchased column
+            purchased_item = QTableWidgetItem()
+            purchased_item.setCheckState(Qt.Checked if purchased else Qt.Unchecked)
+            purchased_item.setText("Yes" if purchased else "No")
+            self.shopping_table.setItem(row, 4, purchased_item)
+    
+    def add_item(self):
+        """Add item to shopping list"""
+        item_text = self.item_input.text().strip()
+        quantity_text = self.quantity_input.text().strip() or "1"
+        store = self.store_combo.currentText()
+        category = self.category_combo.currentText()
+        
+        if item_text:
+            # Save to database first
+            item_id = self._save_shopping_item_to_database(item_text, quantity_text, store, category)
+            if item_id:
+                # Clear inputs
+                self.item_input.clear()
+                self.quantity_input.clear()
+                
+                # Refresh the display to show the new item
+                self.refresh()
+                
+                # Auto-organize by store if enabled
+                self.organize_by_store()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to save item to database.")
+    
+    def filter_by_store(self):
+        """Filter shopping list by selected store"""
+        selected_store = self.store_filter.currentText()
+        
+        if selected_store == "All Stores":
+            # Show all rows
+            for row in range(self.shopping_table.rowCount()):
+                self.shopping_table.setRowHidden(row, False)
+        else:
+            # Hide rows that don't match the selected store
+            for row in range(self.shopping_table.rowCount()):
+                store_item = self.shopping_table.item(row, 0)
+                if store_item and store_item.text() == selected_store:
+                    self.shopping_table.setRowHidden(row, False)
+                else:
+                    self.shopping_table.setRowHidden(row, True)
+    
+    def organize_by_store(self):
+        """Organize shopping list by store, then by category"""
+        # Get all items
+        items = []
+        for row in range(self.shopping_table.rowCount()):
+            store_item = self.shopping_table.item(row, 0)
+            item_item = self.shopping_table.item(row, 1)
+            quantity_item = self.shopping_table.item(row, 2)
+            category_item = self.shopping_table.item(row, 3)
+            purchased_item = self.shopping_table.item(row, 4)
+            
+            if all([store_item, item_item, quantity_item, category_item, purchased_item]):
+                items.append({
+                    'store': store_item.text(),
+                    'item': item_item.text(),
+                    'quantity': quantity_item.text(),
+                    'category': category_item.text(),
+                    'purchased': purchased_item.text(),
+                    'check_state': purchased_item.checkState()
+                })
+        
+        # Sort by store, then by category
+        items.sort(key=lambda x: (x['store'], x['category'], x['item']))
+        
+        # Clear table and re-add sorted items
+        self.shopping_table.setRowCount(0)
+        
+        for item_data in items:
+            row = self.shopping_table.rowCount()
+            self.shopping_table.insertRow(row)
+            
+            self.shopping_table.setItem(row, 0, QTableWidgetItem(item_data['store']))
+            self.shopping_table.setItem(row, 1, QTableWidgetItem(item_data['item']))
+            self.shopping_table.setItem(row, 2, QTableWidgetItem(item_data['quantity']))
+            self.shopping_table.setItem(row, 3, QTableWidgetItem(item_data['category']))
+            
+            # Create checkbox for purchased column
+            purchased_item = QTableWidgetItem()
+            purchased_item.setCheckState(item_data['check_state'])
+            purchased_item.setText(item_data['purchased'])
+            self.shopping_table.setItem(row, 4, purchased_item)
+    
+    def _add_shopping_item(self, item, quantity, category, store="Grocery Store"):
+        """Add shopping item programmatically (used by menu planning)"""
+        row = self.shopping_table.rowCount()
+        self.shopping_table.insertRow(row)
+        self.shopping_table.setItem(row, 0, QTableWidgetItem(store))
+        self.shopping_table.setItem(row, 1, QTableWidgetItem(item))
+        self.shopping_table.setItem(row, 2, QTableWidgetItem(quantity))
+        self.shopping_table.setItem(row, 3, QTableWidgetItem(category))
+        
+        # Create checkbox for purchased column
+        purchased_item = QTableWidgetItem()
+        purchased_item.setCheckState(Qt.Unchecked)
+        purchased_item.setText("No")
+        self.shopping_table.setItem(row, 4, purchased_item)
+    
+    def on_item_changed(self, item):
+        """Handle item changes in the table"""
+        if item.column() == 4:  # Purchased column (now column 4)
+            if item.checkState() == Qt.Checked:
+                item.setText("Yes")
+            else:
+                item.setText("No")
+    
+    def on_table_resize(self, event):
+        """Handle table resize to update minimum section sizes"""
+        # Update minimum section size to 20% of table width
+        header = self.shopping_table.horizontalHeader()
+        min_width = int(self.shopping_table.width() * 0.2) if self.shopping_table.width() > 0 else 100
+        header.setMinimumSectionSize(min_width)
+        
+        # Call the original resize event
+        QTableWidget.resizeEvent(self.shopping_table, event)
+    
+    def on_selection_changed(self):
+        """Handle table selection changes"""
+        has_selection = len(self.shopping_table.selectedItems()) > 0
+        self.remove_btn.setEnabled(has_selection)
+    
+    def edit_item(self):
+        """Edit selected shopping list item"""
+        current_row = self.shopping_table.currentRow()
+        if current_row >= 0:
             try:
-                import webbrowser
-                webbrowser.open(f"file:///{html_path}#print", new=2)
-            except Exception:
-                pass
-
-    def _item_dialog(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
-        dlg = tk.Toplevel(self)
-        dlg.title("Shopping item"); dlg.transient(self.winfo_toplevel()); dlg.grab_set()
-        frm = ttk.Frame(dlg, padding=8); frm.grid(row=0, column=0, sticky="nsew")
-        frm.grid_columnconfigure(1, weight=1)
-
-        def g(k: str, d: str = "") -> str:
-            if row is None:
-                return d
-            return str(row[k]) if k in row.keys() and row[k] is not None else d
-
-        v = {
-            "name": tk.StringVar(value=g("name")),
-            "brand": tk.StringVar(value=g("brand")),
-            "category": tk.StringVar(value=g("category")),
-            "store": tk.StringVar(value=g("store")),
-            "net_weight": tk.StringVar(value=g("net_weight")),
-            "thresh": tk.StringVar(value=str(g("thresh", ""))),
-            "notes": tk.StringVar(value=g("notes")),
-        }
-
-        r = 0
-        def roww(label: str, widget: tk.Widget):
-            nonlocal r
-            ttk.Label(frm, text=label).grid(row=r, column=0, sticky="e", padx=(0,8), pady=(0,4))
-            widget.grid(row=r, column=1, sticky="ew", pady=(0,4))
-            r += 1
-
-        roww("Item *", ttk.Entry(frm, textvariable=v["name"], width=36))
-        roww("Brand", ttk.Entry(frm, textvariable=v["brand"]))
-        roww("Category", ttk.Entry(frm, textvariable=v["category"]))
-        roww("Store", ttk.Entry(frm, textvariable=v["store"]))
-        roww("Size", ttk.Entry(frm, textvariable=v["net_weight"], width=10))
-        roww("Qty", ttk.Entry(frm, textvariable=v["thresh"], width=8))
-        roww("Notes", ttk.Entry(frm, textvariable=v["notes"]))
-
-        err = ttk.Label(frm, text="", foreground="red")
-        err.grid(row=r, column=1, sticky="w"); r += 1
-
-        out: dict[str, Any] = {}
-        def save():
-            name = (v["name"].get() or "").strip()
-            if not name:
-                err.config(text="Item name is required"); return
-            out.update({k: (vv.get() or "").strip() for k, vv in v.items()})
-            dlg.destroy()
-
-        btns = ttk.Frame(dlg, padding=(8, 6)); btns.grid(row=1, column=0, sticky="e")
-        ttk.Button(btns, text="Cancel", command=dlg.destroy).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(btns, text="Save", command=save).grid(row=0, column=1)
-        dlg.wait_window()
-        return out or None
-
-    def _popup_menu(self, ev: tk.Event, menu: tk.Menu) -> None:
+                from utils.edit_dialogs import ShoppingItemEditDialog
+                
+                # Get current item data
+                item_data = {
+                    'store': self.shopping_table.item(current_row, 0).text(),
+                    'item': self.shopping_table.item(current_row, 1).text(),
+                    'quantity': self.shopping_table.item(current_row, 2).text(),
+                    'category': self.shopping_table.item(current_row, 3).text(),
+                    'priority': 'Medium',
+                    'notes': ''
+                }
+                
+                # Open edit dialog
+                dialog = ShoppingItemEditDialog(self)
+                dialog.set_data(item_data)
+                
+                if dialog.exec() == QDialog.Accepted:
+                    new_data = dialog.get_data()
+                    
+                    # Update table with new data
+                    self.shopping_table.setItem(current_row, 0, QTableWidgetItem(new_data['store']))
+                    self.shopping_table.setItem(current_row, 1, QTableWidgetItem(new_data['item']))
+                    self.shopping_table.setItem(current_row, 2, QTableWidgetItem(new_data['quantity']))
+                    self.shopping_table.setItem(current_row, 3, QTableWidgetItem(new_data['category']))
+                    
+                    QMessageBox.information(self, "Success", "Shopping item updated successfully!")
+                    
+            except ImportError:
+                item_name = self.shopping_table.item(current_row, 1).text()  # Item is now in column 1
+                QMessageBox.information(self, "Edit Item", f"Edit functionality for '{item_name}' will be implemented here.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to edit item: {str(e)}")
+    
+    def remove_item(self):
+        """Remove selected item from shopping list"""
+        current_row = self.shopping_table.currentRow()
+        if current_row >= 0:
+            item_name = self.shopping_table.item(current_row, 1).text()  # Item is now in column 1
+            reply = QMessageBox.question(self, "Remove Item", 
+                                       f"Are you sure you want to remove '{item_name}' from the shopping list?",
+                                       QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.shopping_table.removeRow(current_row)
+    
+    def clear_all(self):
+        """Clear all items from shopping list"""
+        reply = QMessageBox.question(self, "Clear All", 
+                                   "Are you sure you want to clear all items from the shopping list?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.shopping_table.setRowCount(0)
+    
+    def print_list(self):
+        """Print shopping list"""
         try:
-            menu.tk_popup(ev.x_root, ev.y_root)
+            from services.export_service import export_service
+            
+            # Get shopping list data from table
+            shopping_data = []
+            for row in range(self.shopping_table.rowCount()):
+                item_data = {
+                    'item': self.shopping_table.item(row, 0).text() if self.shopping_table.item(row, 0) else '',
+                    'quantity': self.shopping_table.item(row, 1).text() if self.shopping_table.item(row, 1) else '',
+                    'category': self.shopping_table.item(row, 2).text() if self.shopping_table.item(row, 2) else '',
+                    'priority': 'Medium',
+                    'notes': ''
+                }
+                shopping_data.append(item_data)
+            
+            # Show export options dialog
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Export Shopping List")
+            dialog.setModal(True)
+            dialog.resize(300, 200)
+            
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(QLabel("Select export format:"))
+            
+            button_group = QButtonGroup()
+            csv_radio = QRadioButton("CSV (for spreadsheets)")
+            csv_radio.setChecked(True)
+            pdf_radio = QRadioButton("PDF (for printing)")
+            html_radio = QRadioButton("HTML (web view)")
+            
+            button_group.addButton(csv_radio, 0)
+            button_group.addButton(pdf_radio, 1)
+            button_group.addButton(html_radio, 2)
+            
+            layout.addWidget(csv_radio)
+            layout.addWidget(pdf_radio)
+            layout.addWidget(html_radio)
+            
+            button_layout = QHBoxLayout()
+            export_btn = QPushButton("Export")
+            cancel_btn = QPushButton("Cancel")
+            
+            export_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            button_layout.addWidget(export_btn)
+            button_layout.addWidget(cancel_btn)
+            layout.addLayout(button_layout)
+            
+            if dialog.exec() == QDialog.Accepted:
+                selected_format = button_group.checkedId()
+                if selected_format == 0:
+                    export_service.export_shopping_list(self, shopping_data)
+                elif selected_format == 1:
+                    export_service.export_data(self, shopping_data, 'pdf', "Shopping List")
+                elif selected_format == 2:
+                    export_service.export_data(self, shopping_data, 'html', "Shopping List")
+                    
+        except ImportError:
+            QMessageBox.information(self, "Print List", "Print functionality will be implemented here.")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export shopping list: {str(e)}")
+    def export_shopping_list(self):
+
+        """Export shopping list to file"""
+
+        try:
+
+            from services.export_service import export_service
+
+            
+
+            # Get shopping list data from table
+
+            shopping_data = []
+
+            for row in range(self.shopping_table.rowCount()):
+
+                item_data = {
+
+                    'store': self.shopping_table.item(row, 0).text() if self.shopping_table.item(row, 0) else '',
+
+                    'item': self.shopping_table.item(row, 1).text() if self.shopping_table.item(row, 1) else '',
+
+                    'quantity': self.shopping_table.item(row, 2).text() if self.shopping_table.item(row, 2) else '',
+
+                    'category': self.shopping_table.item(row, 3).text() if self.shopping_table.item(row, 3) else '',
+
+                    'purchased': 'Yes' if self.shopping_table.item(row, 4).checkState() == Qt.Checked else 'No'
+
+                }
+
+                shopping_data.append(item_data)
+
+            
+
+            # Show export options dialog
+
+            
+
+            dialog = QDialog(self)
+
+            dialog.setWindowTitle("Export Shopping List")
+
+            dialog.setModal(True)
+
+            dialog.resize(300, 200)
+
+            
+
+            layout = QVBoxLayout(dialog)
+
+            layout.addWidget(QLabel("Select export format:"))
+
+            
+
+            # Format options
+
+            format_group = QButtonGroup()
+
+            csv_radio = QRadioButton("CSV")
+
+            pdf_radio = QRadioButton("PDF")
+
+            html_radio = QRadioButton("HTML")
+
+            
+
+            csv_radio.setChecked(True)
+
+            format_group.addButton(csv_radio, 1)
+
+            format_group.addButton(pdf_radio, 2)
+
+            format_group.addButton(html_radio, 3)
+
+            
+
+            layout.addWidget(csv_radio)
+
+            layout.addWidget(pdf_radio)
+
+            layout.addWidget(html_radio)
+
+            
+
+            button_layout = QHBoxLayout()
+
+            export_btn = QPushButton("Export")
+
+            cancel_btn = QPushButton("Cancel")
+
+            
+
+            export_btn.clicked.connect(dialog.accept)
+
+            cancel_btn.clicked.connect(dialog.reject)
+
+            
+
+            button_layout.addWidget(export_btn)
+
+            button_layout.addWidget(cancel_btn)
+
+            layout.addLayout(button_layout)
+
+            
+
+            if dialog.exec() == QDialog.Accepted:
+
+                selected_format = format_group.checkedId()
+
+                if selected_format == 1:
+
+                    export_service.export_data(self, shopping_data, 'csv', "Shopping List")
+
+                elif selected_format == 2:
+
+                    export_service.export_data(self, shopping_data, 'pdf', "Shopping List")
+
+                elif selected_format == 3:
+
+                    export_service.export_data(self, shopping_data, 'html', "Shopping List")
+
+                    
+
+        except ImportError:
+
+            QMessageBox.information(self, "Export Shopping List", 
+
+                "Export functionality will be implemented here.\n\n"
+
+                "Features will include:\n"
+
+                "�� � CSV export\n"
+
+                "�� � PDF shopping list\n"
+
+                "�� � HTML printable format\n"
+
+                "�� � Organized by store")
+
+        except Exception as e:
+
+            QMessageBox.critical(self, "Export Error", f"Failed to export shopping list: {str(e)}")
+
+    
+
+    def import_shopping_list(self):
+
+        """Import shopping list from file"""
+
+        from PySide6.QtWidgets import QFileDialog
+
+        
+
+        # Create import dialog
+
+        dialog = QDialog(self)
+
+        dialog.setWindowTitle("Import Shopping List")
+
+        dialog.setModal(True)
+
+        dialog.resize(500, 400)
+
+        
+
+        layout = QVBoxLayout(dialog)
+
+        
+
+        # Header
+
+        header_label = QLabel("Import Shopping List")
+
+        header_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
+
+        layout.addWidget(header_label)
+
+        
+
+        # File type selection
+
+        type_group = QGroupBox("File Type")
+
+        type_layout = QVBoxLayout(type_group)
+
+        
+
+        self.csv_radio = QRadioButton("CSV File")
+
+        self.csv_radio.setChecked(True)
+
+        self.excel_radio = QRadioButton("Excel File")
+
+        self.json_radio = QRadioButton("JSON File")
+
+        
+
+        type_layout.addWidget(self.csv_radio)
+
+        type_layout.addWidget(self.excel_radio)
+
+        type_layout.addWidget(self.json_radio)
+
+        
+
+        layout.addWidget(type_group)
+
+        
+
+        # File selection
+
+        file_group = QGroupBox("File Selection")
+
+        file_layout = QVBoxLayout(file_group)
+
+        
+
+        file_path_layout = QHBoxLayout()
+
+        file_path_layout.addWidget(QLabel("File:"))
+
+        self.file_path_edit = QLineEdit()
+
+        self.file_path_edit.setPlaceholderText("Select file to import...")
+
+        file_path_layout.addWidget(self.file_path_edit)
+
+        
+
+        browse_btn = QPushButton("Browse...")
+
+        browse_btn.clicked.connect(self.browse_shopping_import_file)
+
+        file_path_layout.addWidget(browse_btn)
+
+        
+
+        file_layout.addLayout(file_path_layout)
+
+        layout.addWidget(file_group)
+
+        
+
+        # Import options
+
+        options_group = QGroupBox("Import Options")
+
+        options_layout = QVBoxLayout(options_group)
+
+        
+
+        # Duplicate handling
+
+        duplicate_layout = QHBoxLayout()
+
+        duplicate_layout.addWidget(QLabel("Duplicate Handling:"))
+
+        self.duplicate_combo = QComboBox()
+
+        self.duplicate_combo.addItems([
+
+            "Skip duplicates",
+
+            "Update existing",
+
+            "Create new entries"
+
+        ])
+
+        duplicate_layout.addWidget(self.duplicate_combo)
+
+        options_layout.addLayout(duplicate_layout)
+
+        
+
+        # Store assignment
+
+        store_layout = QHBoxLayout()
+
+        store_layout.addWidget(QLabel("Default Store:"))
+
+        self.default_store_edit = QLineEdit()
+
+        self.default_store_edit.setPlaceholderText("e.g., Grocery Store, etc.")
+
+        store_layout.addWidget(self.default_store_edit)
+
+        options_layout.addLayout(store_layout)
+
+        
+
+        layout.addWidget(options_group)
+
+        
+
+        # Buttons
+
+        button_layout = QHBoxLayout()
+
+        import_btn = QPushButton("Import List")
+
+        cancel_btn = QPushButton("Cancel")
+
+        button_layout.addWidget(import_btn)
+
+        button_layout.addWidget(cancel_btn)
+
+        layout.addLayout(button_layout)
+
+        
+
+        # Connect signals
+
+        import_btn.clicked.connect(dialog.accept)
+
+        cancel_btn.clicked.connect(dialog.reject)
+
+        
+
+        if dialog.exec() == QDialog.Accepted:
+
+            self.perform_shopping_import()
+
+    
+
+    def browse_shopping_import_file(self):
+
+        """Browse for shopping list import file"""
+
+        from PySide6.QtWidgets import QFileDialog
+
+        
+
+        if self.csv_radio.isChecked():
+
+            file_filter = "CSV Files (*.csv);;All Files (*)"
+
+        elif self.excel_radio.isChecked():
+
+            file_filter = "Excel Files (*.xlsx *.xls);;All Files (*)"
+
+        elif self.json_radio.isChecked():
+
+            file_filter = "JSON Files (*.json);;All Files (*)"
+
+        else:
+
+            file_filter = "All Files (*)"
+
+        
+
+        file_path, _ = QFileDialog.getOpenFileName(
+
+            self, "Select Shopping List File", "", file_filter
+
+        )
+
+        
+
+        if file_path:
+
+            self.file_path_edit.setText(file_path)
+
+    
+
+    def perform_shopping_import(self):
+
+        """Perform the shopping list import"""
+
+        try:
+
+            file_path = self.file_path_edit.text().strip()
+
+            duplicate_handling = self.duplicate_combo.currentText()
+
+            default_store = self.default_store_edit.text().strip() or "Grocery Store"
+
+            
+
+            if not file_path:
+
+                QMessageBox.warning(self, "Validation Error", "Please select a file to import.")
+
+                return
+
+            
+
+            if self.csv_radio.isChecked():
+
+                self.import_shopping_from_csv(file_path, duplicate_handling, default_store)
+
+            elif self.excel_radio.isChecked():
+
+                self.import_shopping_from_excel(file_path, duplicate_handling, default_store)
+
+            elif self.json_radio.isChecked():
+
+                self.import_shopping_from_json(file_path, duplicate_handling, default_store)
+
+            
+
+            # Refresh the shopping list display
+
+            self.load_shopping_list()
+
+            
+
+        except Exception as e:
+
+            QMessageBox.critical(self, "Import Error", f"Failed to import shopping list: {str(e)}")
+
+    
+
+    def import_shopping_from_csv(self, file_path, duplicate_handling, default_store):
+
+        """Import shopping list from CSV file"""
+
+        import csv
+
+        from utils.db import get_connection
+
+        
+
+        conn = get_connection()
+
+        
+
+        try:
+
+            with open(file_path, 'r', encoding='utf-8') as file:
+
+                reader = csv.DictReader(file)
+
+                imported_count = 0
+
+                
+
+                for row in reader:
+
+                    item = row.get('item', '').strip()
+
+                    quantity = row.get('quantity', '').strip()
+
+                    category = row.get('category', '').strip()
+
+                    store = row.get('store', default_store).strip()
+
+                    priority = row.get('priority', 'Medium').strip()
+
+                    notes = row.get('notes', '').strip()
+
+                    
+
+                    if not item:
+
+                        continue
+
+                    
+
+                    # Handle duplicates
+
+                    if duplicate_handling == "Skip duplicates":
+
+                        existing = conn.execute(
+
+                            "SELECT id FROM shopping_list WHERE item_name = ? AND store = ?",
+
+                            (item, store)
+
+                        ).fetchone()
+
+                        if existing:
+
+                            continue
+
+                    
+
+                    # Insert item
+
+                    conn.execute("""
+
+                        INSERT OR REPLACE INTO shopping_list 
+
+                        (item, quantity, category, store, priority, notes)
+
+                        VALUES (?, ?, ?, ?, ?, ?)
+
+                    """, (item, quantity, category, store, priority, notes))
+
+                    imported_count += 1
+
+                
+
+                conn.commit()
+
+                QMessageBox.information(self, "Import Complete", 
+
+                                      f"Successfully imported {imported_count} items from CSV file.")
+
+        
+
+        except Exception as e:
+
+            conn.rollback()
+
+            raise e
+
         finally:
-            menu.grab_release()
+
+            conn.close()
+
+    
+
+    def import_shopping_from_excel(self, file_path, duplicate_handling, default_store):
+
+        """Import shopping list from Excel file"""
+
+        QMessageBox.information(self, "Excel Import", 
+
+                               f"Excel import would process {file_path}.\n\n"
+
+                               "This feature would:\n"
+
+                               "�� � Parse Excel workbook\n"
+
+                               "�� � Extract shopping items\n"
+
+                               "�� � Handle multiple sheets\n"
+
+                               "�� � Validate data format")
+
+    
+
+    def import_shopping_from_json(self, file_path, duplicate_handling, default_store):
+
+        """Import shopping list from JSON file"""
+
+        QMessageBox.information(self, "JSON Import", 
+
+                               f"JSON import would process {file_path}.\n\n"
+
+                               "This feature would:\n"
+
+                               "�� � Parse JSON structure\n"
+
+                               "�� � Extract shopping items\n"
+
+                               "�� � Handle nested objects\n"
+
+                               "�� � Validate schema")
+
+
+    def _save_shopping_item_to_database(self, item_name, quantity, store, category):
+        """Save shopping list item to database and return item ID"""
+        try:
+            from utils.db import get_connection
+            
+            db = get_connection()
+            cursor = db.cursor()
+            
+            # Insert item
+            cursor.execute("""
+                INSERT INTO shopping_list (name, item_name, store, category, created_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (item_name, item_name, store, category))
+            
+            item_id = cursor.lastrowid
+            db.commit()
+            return item_id
+            
+        except Exception as e:
+            print(f"Error saving shopping list item to database: {e}")
+            return None

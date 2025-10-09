@@ -1,0 +1,519 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>HealthLogPanel</class>
+ <widget class="QWidget" name="HealthLogPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="spacing">
+    <number>10</number>
+   </property>
+   <property name="leftMargin">
+    <number>10</number>
+   </property>
+   <property name="topMargin">
+    <number>10</number>
+   </property>
+   <property name="rightMargin">
+    <number>10</number>
+   </property>
+   <property name="bottomMargin">
+    <number>10</number>
+   </property>
+   <item>
+    <widget class="QScrollArea" name="scrollArea">
+     <property name="widgetResizable">
+      <bool>true</bool>
+     </property>
+     <widget class="QWidget" name="scrollAreaWidgetContents">
+      <property name="geometry">
+       <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>798</width>
+        <height>480</height>
+       </rect>
+      </property>
+      <layout class="QVBoxLayout" name="scrollLayout">
+       <property name="spacing">
+        <number>15</number>
+       </property>
+       <item>
+        <widget class="QGroupBox" name="basicGroup">
+         <property name="title">
+          <string>Basic Information</string>
+         </property>
+         <layout class="QVBoxLayout" name="basicLayout">
+          <item>
+           <layout class="QHBoxLayout" name="datetimeLayout">
+            <item>
+             <widget class="QLabel" name="dateLabel">
+              <property name="text">
+               <string>Date:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QDateEdit" name="dateEdit"/>
+            </item>
+            <item>
+             <widget class="QLabel" name="timeLabel">
+              <property name="text">
+               <string>Time:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="timeCombo">
+              <property name="editable">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="mealLayout">
+            <item>
+             <widget class="QLabel" name="mealLabel">
+              <property name="text">
+               <string>Meal Type:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="mealCombo">
+              <item>
+               <property name="text">
+                <string>Breakfast</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Lunch</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Dinner</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Snack</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Other</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QVBoxLayout" name="itemsLayout">
+            <item>
+             <widget class="QLabel" name="itemsLabel">
+              <property name="text">
+               <string>Items Consumed:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTextEdit" name="itemsEdit">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>60</height>
+               </size>
+              </property>
+              <property name="placeholderText">
+               <string>Enter items consumed...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="symptomsGroup">
+         <property name="title">
+          <string>Symptoms &amp; Assessment</string>
+         </property>
+         <layout class="QVBoxLayout" name="symptomsLayout">
+          <item>
+           <layout class="QHBoxLayout" name="riskLayout">
+            <item>
+             <widget class="QLabel" name="riskLabel">
+              <property name="text">
+               <string>Risk Level:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="riskCombo">
+              <item>
+               <property name="text">
+                <string>none</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>low</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>med</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>high</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="onsetLayout">
+            <item>
+             <widget class="QLabel" name="onsetLabel">
+              <property name="text">
+               <string>Onset (minutes):</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="onsetSpin">
+              <property name="minimum">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <number>1440</number>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="severityLabel">
+              <property name="text">
+               <string>Severity (0-10):</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="severitySpin">
+              <property name="minimum">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <number>10</number>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QVBoxLayout" name="symptomsTextLayout">
+            <item>
+             <widget class="QLabel" name="symptomsTextLabel">
+              <property name="text">
+               <string>Symptoms:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTextEdit" name="symptomsEdit">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>60</height>
+               </size>
+              </property>
+              <property name="placeholderText">
+               <string>Describe symptoms...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="bristolGroup">
+         <property name="title">
+          <string>Bristol Stool Scale</string>
+         </property>
+         <layout class="QVBoxLayout" name="bristolLayout">
+          <item>
+           <widget class="QRadioButton" name="bristol1Radio">
+            <property name="text">
+             <string>1 - Separate hard lumps (constipation)</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol2Radio">
+            <property name="text">
+             <string>2 - Lumpy sausage</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol3Radio">
+            <property name="text">
+             <string>3 - Cracked sausage</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol4Radio">
+            <property name="text">
+             <string>4 - Smooth sausage (normal)</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol5Radio">
+            <property name="text">
+             <string>5 - Soft blobs</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol6Radio">
+            <property name="text">
+             <string>6 - Fluffy pieces</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="bristol7Radio">
+            <property name="text">
+             <string>7 - Watery (diarrhea)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="ggGroup">
+         <property name="title">
+          <string>Gluten Guardian Tracking</string>
+         </property>
+         <layout class="QVBoxLayout" name="ggLayout">
+          <item>
+           <layout class="QHBoxLayout" name="hydrationLayout">
+            <item>
+             <widget class="QLabel" name="hydrationLabel">
+              <property name="text">
+               <string>Hydration (L):</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="hydrationSpin">
+              <property name="minimum">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <number>10</number>
+              </property>
+              <property name="suffix">
+               <string> L</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="fiberLabel">
+              <property name="text">
+               <string>Fiber (g):</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="fiberSpin">
+              <property name="minimum">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <number>100</number>
+              </property>
+              <property name="suffix">
+               <string> g</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="moodLayout">
+            <item>
+             <widget class="QLabel" name="moodLabel">
+              <property name="text">
+               <string>Mood:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="moodCombo">
+              <item>
+               <property name="text">
+                <string>😊</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>😐</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>😣</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>😢</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>😡</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QVBoxLayout" name="energyLayout">
+            <item>
+             <widget class="QLabel" name="energyLabel">
+              <property name="text">
+               <string>Energy Level (1-10):</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSlider" name="energySlider">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="minimum">
+               <number>1</number>
+              </property>
+              <property name="maximum">
+               <number>10</number>
+              </property>
+              <property name="value">
+               <number>5</number>
+              </property>
+              <property name="tickPosition">
+               <enum>QSlider::TicksBelow</enum>
+              </property>
+              <property name="tickInterval">
+               <number>1</number>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="energyValueLabel">
+              <property name="text">
+               <string>5</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="notesGroup">
+         <property name="title">
+          <string>Notes</string>
+         </property>
+         <layout class="QVBoxLayout" name="notesLayout">
+          <item>
+           <widget class="QTextEdit" name="notesEdit">
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>80</height>
+             </size>
+            </property>
+            <property name="placeholderText">
+             <string>Additional notes...</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttonLayout">
+     <item>
+      <widget class="QPushButton" name="saveButton">
+       <property name="text">
+        <string>Save Entry</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="clearButton">
+       <property name="text">
+        <string>Clear Form</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="analyzeButton">
+       <property name="text">
+        <string>Analyze Patterns</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

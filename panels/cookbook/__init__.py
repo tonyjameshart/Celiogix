@@ -1,0 +1,1 @@
+# Cookbook panel modules

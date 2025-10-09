@@ -6,20 +6,24 @@ Service layer exports (functional style).
 - Optional GF Safety helpers (only if services/gf_safety.py exists)
 """
 
-# --- Inventory / Shopping (required) ---
-from .inventory import (
-    apply_menu_consumption,
-    apply_pending,
-    expand_menu_ingredients,
-    is_low_stock,
-    iter_low_stock_items,
-)
-from .shopping import (
-    mark_purchased,
-    merge_or_increment,
-    recompute_for_ids,
-    recompute_from_thresholds,
-)
+# --- Inventory / Shopping (optional - may not exist) ---
+try:
+    from .inventory import (
+        apply_menu_consumption,
+        apply_pending,
+        expand_menu_ingredients,
+        is_low_stock,
+        iter_low_stock_items,
+    )
+    from .shopping import (
+        mark_purchased,
+        merge_or_increment,
+        recompute_for_ids,
+        recompute_from_thresholds,
+    )
+except ImportError:
+    # Inventory/Shopping modules not present; skip re-exports
+    pass
 
 # --- Optional: Pantry CRUD passthroughs ---
 try:
@@ -43,6 +47,35 @@ try:
     )
 except Exception:
     # GF safety module not present; skip re-exports
+    pass
+
+# --- Recipe services ---
+try:
+    from .recipe_scraper import (
+        RecipeScraper, scrape_recipe_from_url, scrape_recipes_from_url,
+        check_scraper_dependencies, is_scraper_available
+    )
+    from .recipe_enhancement import (
+        RecipeRanker, RecipeScaler, IngredientSubstitution, RecipeConverter, RecipeExporter,
+        recipe_ranker, recipe_scaler, ingredient_substitution, recipe_converter, recipe_exporter
+    )
+except Exception:
+    # Recipe services not present; skip re-exports
+    pass
+
+# --- Gluten Guardian services ---
+try:
+    from .symptom_correlation_engine import (
+        analyze_symptom_patterns,
+        generate_correlation_insights,
+        recommend_meals_based_on_symptoms,
+        SymptomPattern,
+        CorrelationInsight,
+    )
+    from .pdf_export_service import PDFExportService, check_reportlab_available
+    from .barcode_scanner_service import BarcodeScannerService, BarcodeResult, check_scanner_available
+except Exception:
+    # Gluten Guardian modules not present; skip re-exports
     pass
 
 # --- Public surface: build dynamically to avoid phantom names ---
@@ -70,6 +103,33 @@ __all__ = [
     "classify_recipe_record",
     "apply_to_pantry_dict",
     "GFSafetyResult",
+    # recipe services
+    "RecipeScraper",
+    "scrape_recipe_from_url",
+    "scrape_recipes_from_url",
+    "check_scraper_dependencies",
+    "is_scraper_available",
+    "RecipeRanker",
+    "RecipeScaler", 
+    "IngredientSubstitution",
+    "RecipeConverter",
+    "RecipeExporter",
+    "recipe_ranker",
+    "recipe_scaler",
+    "ingredient_substitution",
+    "recipe_converter",
+    "recipe_exporter",
+    # gluten guardian services
+    "analyze_symptom_patterns",
+    "generate_correlation_insights", 
+    "recommend_meals_based_on_symptoms",
+    "SymptomPattern",
+    "CorrelationInsight",
+    "PDFExportService",
+    "check_reportlab_available",
+    "BarcodeScannerService",
+    "BarcodeResult",
+    "check_scanner_available",
 ]
 # Keep only names actually defined (pantry/gf_safety are optional)
 __all__ = [name for name in __all__ if name in globals()]

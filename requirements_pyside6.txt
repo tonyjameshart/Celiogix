@@ -1,0 +1,19 @@
+# PySide6 Application Requirements
+PySide6>=6.6.0
+# sqlite3 is built into Python - no need to install
+cryptography>=41.0.0  # For encryption functionality
+reportlab>=4.0.0  # For PDF export
+pyzbar>=0.1.9  # For barcode scanning
+Pillow>=10.0.0  # For image processing
+requests>=2.31.0  # For API calls
+python-dotenv>=1.0.0  # For environment variables
+
+# Web scraping and data processing
+beautifulsoup4>=4.12.0  # For HTML parsing
+lxml>=4.9.0  # For XML/HTML parsing
+pandas>=2.0.0  # For data manipulation and CSV handling
+openpyxl>=3.1.0  # For Excel file handling
+
+# Health analysis and visualization
+matplotlib>=3.7.0  # For health trend visualization
+numpy>=1.24.0  # For statistical calculations

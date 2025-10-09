@@ -1,0 +1,461 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>PantryPanel</class>
+ <widget class="QWidget" name="PantryPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>825</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="spacing">
+    <number>10</number>
+   </property>
+   <property name="leftMargin">
+    <number>10</number>
+   </property>
+   <property name="topMargin">
+    <number>10</number>
+   </property>
+   <property name="rightMargin">
+    <number>10</number>
+   </property>
+   <property name="bottomMargin">
+    <number>10</number>
+   </property>
+   <item>
+    <widget class="QSplitter" name="splitter">
+     <property name="orientation">
+      <enum>Qt::Orientation::Horizontal</enum>
+     </property>
+     <widget class="QWidget" name="formWidget">
+      <property name="minimumSize">
+       <size>
+        <width>300</width>
+        <height>0</height>
+       </size>
+      </property>
+      <layout class="QVBoxLayout" name="formLayout">
+       <item>
+        <widget class="QGroupBox" name="formGroup">
+         <property name="title">
+          <string>Add/Edit Item</string>
+         </property>
+         <layout class="QVBoxLayout" name="formGroupLayout">
+          <item>
+           <layout class="QHBoxLayout" name="nameLayout">
+            <item>
+             <widget class="QLabel" name="nameLabel">
+              <property name="text">
+               <string>Item Name:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="nameEdit">
+              <property name="placeholderText">
+               <string>Enter item name</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="categoryLayout">
+            <item>
+             <widget class="QLabel" name="categoryLabel">
+              <property name="text">
+               <string>Category:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="categoryCombo">
+              <item>
+               <property name="text">
+                <string>Grains &amp; Flours</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Baking</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Canned Goods</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Dairy</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Meat &amp; Seafood</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Fruits &amp; Vegetables</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Spices &amp; Seasonings</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Snacks</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Beverages</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Other</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="quantityLayout">
+            <item>
+             <widget class="QLabel" name="quantityLabel">
+              <property name="text">
+               <string>Quantity:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QSpinBox" name="quantitySpin">
+              <property name="minimum">
+               <number>0</number>
+              </property>
+              <property name="maximum">
+               <number>9999</number>
+              </property>
+              <property name="value">
+               <number>1</number>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="unitLayout">
+            <item>
+             <widget class="QLabel" name="unitLabel">
+              <property name="text">
+               <string>Unit:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="unitCombo">
+              <item>
+               <property name="text">
+                <string>pieces</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>cups</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>tbsp</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>tsp</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>lbs</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>oz</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>grams</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>ml</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>liters</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>cans</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>boxes</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>bags</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="expLayout">
+            <item>
+             <widget class="QLabel" name="expLabel">
+              <property name="text">
+               <string>Expiration:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QDateEdit" name="expDate">
+              <property name="date">
+               <date>
+                <year>2024</year>
+                <month>2</month>
+                <day>15</day>
+               </date>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="gfLayout">
+            <item>
+             <widget class="QLabel" name="gfLabel">
+              <property name="text">
+               <string>Gluten-Free:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="gfCombo">
+              <item>
+               <property name="text">
+                <string>Yes</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>No</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Unknown</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QVBoxLayout" name="notesLayout">
+            <item>
+             <widget class="QLabel" name="notesLabel">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Notes:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTextEdit" name="notesEdit">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>800</height>
+               </size>
+              </property>
+              <property name="placeholderText">
+               <string>Additional notes...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="buttonLayout">
+            <item>
+             <widget class="QPushButton" name="addButton">
+              <property name="text">
+               <string>Add Item</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="updateButton">
+              <property name="text">
+               <string>Update Item</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="clearButton">
+              <property name="text">
+               <string>Clear Form</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="listWidget">
+      <property name="minimumSize">
+       <size>
+        <width>500</width>
+        <height>0</height>
+       </size>
+      </property>
+      <layout class="QVBoxLayout" name="listLayout">
+       <item>
+        <widget class="QGroupBox" name="listGroup">
+         <property name="title">
+          <string>Pantry Items</string>
+         </property>
+         <layout class="QVBoxLayout" name="listGroupLayout">
+          <item>
+           <layout class="QHBoxLayout" name="searchLayout">
+            <item>
+             <widget class="QLabel" name="searchLabel">
+              <property name="text">
+               <string>Search:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="searchEdit">
+              <property name="placeholderText">
+               <string>Search items...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QTableWidget" name="itemsTable">
+            <property name="alternatingRowColors">
+             <bool>true</bool>
+            </property>
+            <property name="selectionBehavior">
+             <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+            </property>
+            <column>
+             <property name="text">
+              <string>Name</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Category</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Quantity</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Unit</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Expiration</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>GF Status</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Notes</string>
+             </property>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="actionLayout">
+            <item>
+             <widget class="QPushButton" name="deleteButton">
+              <property name="text">
+               <string>Delete Item</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="refreshButton">
+              <property name="text">
+               <string>Refresh</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer">
+              <property name="orientation">
+               <enum>Qt::Orientation::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

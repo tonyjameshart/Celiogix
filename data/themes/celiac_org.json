@@ -1,0 +1,31 @@
+{
+  "name": "Celiac.org",
+  "description": "Theme inspired by the Celiac Disease Foundation website",
+  "colors": {
+    "primary": "#1976d2",
+    "primary_dark": "#1565c0",
+    "primary_light": "#42a5f5",
+    "secondary": "#26a69a",
+    "background": "#ffffff",
+    "surface": "#f8f9fa",
+    "surface_variant": "#e9ecef",
+    "text_primary": "#212529",
+    "text_secondary": "#6c757d",
+    "text_disabled": "#adb5bd",
+    "error": "#dc3545",
+    "border": "#dee2e6",
+    "header_background": "#ffffff",
+    "border_color": "#dee2e6"
+  },
+  "typography": {
+    "font_family": "Segoe UI, Arial, sans-serif",
+    "font_size": 10,
+    "header_size": 16,
+    "button_font_size": 11
+  },
+  "components": {
+    "border_radius": 6,
+    "padding": 10,
+    "spacing": 12
+  }
+}

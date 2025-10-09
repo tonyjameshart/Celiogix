@@ -1,0 +1,34 @@
+{
+  "name": "Dark Modern",
+  "description": "Modern dark theme with green accents",
+  "colors": {
+    "primary": "#4caf50",
+    "primary_dark": "#45a049",
+    "primary_light": "#81c784",
+    "secondary": "#ff9800",
+    "background": "#121212",
+    "surface": "#1e1e1e",
+    "surface_variant": "#2d2d2d",
+    "text_primary": "#ffffff",
+    "text_secondary": "#b0b0b0",
+    "text_disabled": "#757575",
+    "error": "#f44336",
+    "border": "#424242",
+    "title_background": "#121212",
+    "tab_background": "#1e1e1e",
+    "tab_selected": "#2d2d2d",
+    "menubar_background": "#121212",
+    "menubar_text": "#ffffff"
+  },
+  "typography": {
+    "font_family": "Segoe UI",
+    "font_size": 9,
+    "header_size": 14,
+    "button_font_size": 10
+  },
+  "components": {
+    "border_radius": 4,
+    "padding": 8,
+    "spacing": 10
+  }
+}

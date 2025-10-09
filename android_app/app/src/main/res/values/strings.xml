@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Gluten Guardian</string>
+    <string name="scan_barcode">Scan Barcode</string>
+    <string name="log_health">Log Health</string>
+    <string name="export_data">Export Data</string>
+    <string name="import_data">Import Data</string>
+    <string name="camera_permission_required">Camera permission is required for barcode scanning</string>
+    <string name="storage_permission_required">Storage permission is required for file export</string>
+    <string name="product_safe">SAFE</string>
+    <string name="product_unsafe">UNSAFE</string>
+    <string name="product_unknown">UNKNOWN</string>
+    <string name="scan_again">Scan Again</string>
+    <string name="save_result">Save Result</string>
+    <string name="export_success">Data exported successfully</string>
+    <string name="export_failed">Export failed</string>
+    <string name="import_success">Data imported successfully</string>
+    <string name="import_failed">Import failed</string>
+</resources>
