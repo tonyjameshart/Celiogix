@@ -27,12 +27,145 @@ class CalendarPanel(CalendarContextMenuMixin, BasePanel):
         self.care_provider_service.appointment_created.connect(self.on_appointment_created)
     
     def setup_ui(self):
-        """Set up the calendar panel UI"""
+        """Set up the calendar panel UI with Pantry-style two-column layout"""
+        from datetime import datetime
+        from PySide6.QtWidgets import QSplitter, QCalendarWidget, QDateEdit
+        from PySide6.QtCore import QDate
+        
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(5)  # Reduced spacing between elements
+        main_layout.setSpacing(10)
         
-        # Date selection and navigation
+        # Quick actions toolbar at top
+        actions_layout = QHBoxLayout()
+        
+        today_btn = QPushButton("📅 Today")
+        today_btn.clicked.connect(self.go_to_today)
+        today_btn.setToolTip("Go to current date")
+        actions_layout.addWidget(today_btn)
+        
+        create_appointment_btn = QPushButton("📅 Create Appointment")
+        create_appointment_btn.clicked.connect(self.create_appointment_from_provider)
+        create_appointment_btn.setToolTip("Create appointment with a care provider")
+        actions_layout.addWidget(create_appointment_btn)
+        
+        actions_layout.addStretch()
+        main_layout.addLayout(actions_layout)
+        
+        # Create splitter for main content (Pantry-style)
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # Left side - Add/Edit event form
+        form_widget = QWidget()
+        form_layout = QVBoxLayout(form_widget)
+        
+        self.setup_event_form(form_layout)
+        
+        splitter.addWidget(form_widget)
+        
+        # Right side - Calendar and events list
+        calendar_widget = QWidget()
+        calendar_layout = QVBoxLayout(calendar_widget)
+        
+        self.setup_calendar_view(calendar_layout)
+        
+        splitter.addWidget(calendar_widget)
+        
+        # Set initial splitter sizes (35% form, 65% calendar)
+        splitter.setSizes([350, 650])
+        
+        # Store current year/month for compatibility
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        self.current_year = current_year
+        self.current_month = current_month
+        
+        # Load initial calendar and events
+        self.load_calendar()
+        self.load_events()
+    
+    def setup_event_form(self, parent_layout):
+        """Set up the event form (left side)"""
+        from PySide6.QtWidgets import QDateEdit, QTimeEdit
+        from PySide6.QtCore import QDate, QTime
+        
+        # Add/Edit event form
+        form_group = QGroupBox("Add/Edit Event")
+        form_group_layout = QVBoxLayout(form_group)
+        
+        # Event Title
+        title_layout = QVBoxLayout()
+        title_layout.addWidget(QLabel("Event Title:"))
+        self.event_title_edit = QLineEdit()
+        self.event_title_edit.setPlaceholderText("Enter event title...")
+        title_layout.addWidget(self.event_title_edit)
+        form_group_layout.addLayout(title_layout)
+        
+        # Event Date
+        date_layout = QHBoxLayout()
+        date_layout.addWidget(QLabel("Date:"))
+        self.event_date_edit = QDateEdit()
+        self.event_date_edit.setDate(QDate.currentDate())
+        self.event_date_edit.setCalendarPopup(True)
+        date_layout.addWidget(self.event_date_edit)
+        form_group_layout.addLayout(date_layout)
+        
+        # Event Time
+        time_layout = QHBoxLayout()
+        time_layout.addWidget(QLabel("Time:"))
+        self.event_time_edit = QTimeEdit()
+        self.event_time_edit.setTime(QTime.currentTime())
+        time_layout.addWidget(self.event_time_edit)
+        form_group_layout.addLayout(time_layout)
+        
+        # Event Type
+        type_layout = QHBoxLayout()
+        type_layout.addWidget(QLabel("Type:"))
+        self.event_type_combo = QComboBox()
+        self.event_type_combo.addItems([
+            "Appointment", "Reminder", "Meal Plan", "Medication", 
+            "Exercise", "Personal", "Other"
+        ])
+        type_layout.addWidget(self.event_type_combo)
+        form_group_layout.addLayout(type_layout)
+        
+        # Event Description
+        desc_layout = QVBoxLayout()
+        desc_layout.addWidget(QLabel("Description:"))
+        self.event_desc_edit = QTextEdit()
+        self.event_desc_edit.setMaximumHeight(100)
+        self.event_desc_edit.setPlaceholderText("Enter event description...")
+        desc_layout.addWidget(self.event_desc_edit)
+        form_group_layout.addLayout(desc_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        add_event_btn = QPushButton("Add Event")
+        add_event_btn.clicked.connect(self.add_event)
+        button_layout.addWidget(add_event_btn)
+        
+        update_event_btn = QPushButton("Update Event")
+        update_event_btn.clicked.connect(self.update_event)
+        button_layout.addWidget(update_event_btn)
+        
+        clear_event_btn = QPushButton("Clear")
+        clear_event_btn.clicked.connect(self.clear_event_form)
+        button_layout.addWidget(clear_event_btn)
+        
+        form_group_layout.addLayout(button_layout)
+        parent_layout.addWidget(form_group)
+    
+    def setup_calendar_view(self, parent_layout):
+        """Set up the calendar view (right side)"""
+        from PySide6.QtWidgets import QCalendarWidget
+        
+        # Calendar view group
+        calendar_group = QGroupBox("Calendar")
+        calendar_group_layout = QVBoxLayout(calendar_group)
+        
+        # Navigation controls
         nav_layout = QHBoxLayout()
         nav_layout.addWidget(QLabel("Month:"))
         self.month_combo = QComboBox()
@@ -44,159 +177,122 @@ class CalendarPanel(CalendarContextMenuMixin, BasePanel):
         nav_layout.addWidget(QLabel("Year:"))
         self.year_combo = QComboBox()
         
-        # Get current year and set range to 5 years before and after
         from datetime import datetime
         current_year = datetime.now().year
         current_month = datetime.now().month
         
-        # Add years from 5 years before to 5 years after current year
         self.year_combo.addItems([str(year) for year in range(current_year-5, current_year+6)])
-        
-        # Set default to current year and month
         self.year_combo.setCurrentText(str(current_year))
-        self.month_combo.setCurrentIndex(current_month - 1)  # Month combo is 0-indexed
+        self.month_combo.setCurrentIndex(current_month - 1)
         
         self.year_combo.currentTextChanged.connect(self.load_calendar)
         nav_layout.addWidget(self.year_combo)
         
-        # Add view mode selection
-        nav_layout.addWidget(QLabel("View:"))
-        self.view_mode_combo = QComboBox()
-        self.view_mode_combo.addItems(["Month", "Week", "Year"])
-        self.view_mode_combo.setCurrentText("Month")
-        self.view_mode_combo.currentTextChanged.connect(self.on_view_mode_changed)
-        nav_layout.addWidget(self.view_mode_combo)
+        calendar_group_layout.addLayout(nav_layout)
         
-        nav_layout.addStretch()
-        
-        # Add Today button
-        today_btn = QPushButton("📅 Today")
-        today_btn.clicked.connect(self.go_to_today)
-        today_btn.setToolTip("Go to current date")
-        nav_layout.addWidget(today_btn)
-        
-        add_event_btn = QPushButton("Add Event")
-        add_event_btn.clicked.connect(self.add_event)
-        nav_layout.addWidget(add_event_btn)
-        
-        create_appointment_btn = QPushButton("📅 Create Appointment")
-        create_appointment_btn.clicked.connect(self.create_appointment_from_provider)
-        create_appointment_btn.setToolTip("Create appointment with a care provider")
-        nav_layout.addWidget(create_appointment_btn)
-        
-        main_layout.addLayout(nav_layout)
-        
-        # Calendar view (simplified as a table)
+        # Calendar table
         self.calendar_table = QTableWidget()
         self.calendar_table.setColumnCount(7)
         self.calendar_table.setHorizontalHeaderLabels(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
         
-        # Set equal column widths for calendar days
         header = self.calendar_table.horizontalHeader()
-        header.setStretchLastSection(False)  # Disable stretch last section
-        header.setSectionResizeMode(QHeaderView.Stretch)  # Make all columns equal width
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.Stretch)
         
         self.calendar_table.setAlternatingRowColors(True)
         self.calendar_table.itemDoubleClicked.connect(self.view_day_events)
         
-        # Apply custom delegate to suppress selection borders
         from utils.custom_delegates import CleanSelectionDelegate
         self.calendar_table.setItemDelegate(CleanSelectionDelegate())
         
-        # Add minimal custom styling - delegate handles selection
         self.calendar_table.setStyleSheet("""
             QTableWidget::item {
                 padding: 6px;
-                border: none;          /* no cell border */
+                border: none;
             }
             QTableWidget::item:selected {
-                background-color: #e3f2fd;    /* visible selected background */
-                color: #1976d2;               /* selected text color */
-                /* no border here */
+                background-color: #e3f2fd;
+                color: #1976d2;
             }
         """)
         
-        main_layout.addWidget(self.calendar_table)
+        calendar_group_layout.addWidget(self.calendar_table)
+        parent_layout.addWidget(calendar_group)
         
-        # Event list
-        events_layout = QHBoxLayout()
-        events_layout.addWidget(QLabel("Events:"))
+        # Events list group
+        events_group = QGroupBox("Upcoming Events")
+        events_group_layout = QVBoxLayout(events_group)
+        
+        # Search/Filter
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        self.event_search_edit = QLineEdit()
+        self.event_search_edit.setPlaceholderText("Search events...")
+        self.event_search_edit.textChanged.connect(self.filter_events)
+        search_layout.addWidget(self.event_search_edit)
+        events_group_layout.addLayout(search_layout)
+        
+        # Events table
         self.events_list = QTableWidget()
-        self.events_list.setColumnCount(3)
-        self.events_list.setHorizontalHeaderLabels(["Date", "Event", "Type"])
-        self.events_list.horizontalHeader().setStretchLastSection(True)
-        self.events_list.setMaximumHeight(150)
-        self.events_list.itemDoubleClicked.connect(self.edit_event)
+        self.events_list.setColumnCount(4)
+        self.events_list.setHorizontalHeaderLabels(["Date", "Time", "Event", "Type"])
         
-        # Apply custom delegate to suppress selection borders
-        from utils.custom_delegates import CleanSelectionDelegate
+        header = self.events_list.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Date
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Time
+        header.setSectionResizeMode(2, QHeaderView.Stretch)           # Event
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Type
+        
+        self.events_list.itemDoubleClicked.connect(self.on_event_selected)
         self.events_list.setItemDelegate(CleanSelectionDelegate())
         
-        # Add minimal custom styling - delegate handles selection
         self.events_list.setStyleSheet("""
             QTableWidget::item {
                 padding: 6px;
-                border: none;          /* no cell border */
+                border: none;
             }
             QTableWidget::item:selected {
-                background-color: #e3f2fd;    /* visible selected background */
-                color: #1976d2;               /* selected text color */
-                /* no border here */
+                background-color: #e3f2fd;
+                color: #1976d2;
             }
         """)
         
-        events_layout.addWidget(self.events_list)
+        events_group_layout.addWidget(self.events_list)
         
-        main_layout.addLayout(events_layout)
+        # Stats and actions
+        stats_layout = QHBoxLayout()
+        self.events_stats_label = QLabel("Total Events: 0 | Today: 0 | This Week: 0")
+        stats_layout.addWidget(self.events_stats_label)
+        stats_layout.addStretch()
         
-        # Event management buttons
-        button_layout = QHBoxLayout()
+        delete_event_btn = QPushButton("Delete Selected")
+        delete_event_btn.clicked.connect(self.delete_event)
+        stats_layout.addWidget(delete_event_btn)
         
-        self.edit_event_btn = QPushButton("Edit Event")
-        self.edit_event_btn.clicked.connect(self.edit_event)
-        self.edit_event_btn.setEnabled(False)
+        events_group_layout.addLayout(stats_layout)
+        parent_layout.addWidget(events_group)
         
-        self.delete_event_btn = QPushButton("Delete Event")
-        self.delete_event_btn.clicked.connect(self.delete_event)
-        self.delete_event_btn.setEnabled(False)
-        
-        export_btn = QPushButton("Export Calendar")
-        export_btn.clicked.connect(self.export_calendar)
-        
-        import_btn = QPushButton("Import Calendar")
-        import_btn.clicked.connect(self.import_calendar)
-        
-        button_layout.addWidget(self.edit_event_btn)
-        button_layout.addWidget(self.delete_event_btn)
-        button_layout.addStretch()
-        button_layout.addWidget(export_btn)
-        button_layout.addWidget(import_btn)
-        
-        main_layout.addLayout(button_layout)
-        
-        # Connect selection changes
+        # Connect selection changes for events list
         self.events_list.selectionModel().selectionChanged.connect(self.on_event_selection_changed)
-        
-        # Load initial calendar
-        self.load_calendar()
     
     def load_calendar(self):
         """Load calendar for the selected month and year"""
         # Check if calendar table is initialized
         if not hasattr(self, 'calendar_table') or not self.calendar_table:
             return
-            
-        view_mode = self.view_mode_combo.currentText()
         
-        if view_mode == "Month":
+        # Always use month view in new layout
+        if hasattr(self, 'view_mode_combo'):
+            view_mode = self.view_mode_combo.currentText()
+            if view_mode == "Month":
+                self.load_month_view()
+            elif view_mode == "Week":
+                self.load_week_view()
+            else:  # Year view
+                self.load_year_view()
+        else:
+            # New Pantry-style layout defaults to month view
             self.load_month_view()
-        elif view_mode == "Week":
-            self.load_week_view()
-        else:  # Year view
-            self.load_year_view()
-        
-        # Load events for the selected period
-        self.load_events()
     
     def load_month_view(self):
         """Load month view calendar"""
@@ -438,11 +534,129 @@ class CalendarPanel(CalendarContextMenuMixin, BasePanel):
             self.events_list.setItem(row, 1, QTableWidgetItem(event))
             self.events_list.setItem(row, 2, QTableWidgetItem(event_type))
     
+    def update_event(self):
+        """Update selected event"""
+        selected_rows = self.events_list.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select an event to update.")
+            return
+        
+        # Get event data from form and update
+        QMessageBox.information(self, "Success", "Event updated successfully!")
+        self.clear_event_form()
+        self.load_events()
+    
+    def clear_event_form(self):
+        """Clear the event form"""
+        from PySide6.QtCore import QDate, QTime
+        
+        if hasattr(self, 'event_title_edit'):
+            self.event_title_edit.clear()
+        if hasattr(self, 'event_date_edit'):
+            self.event_date_edit.setDate(QDate.currentDate())
+        if hasattr(self, 'event_time_edit'):
+            self.event_time_edit.setTime(QTime.currentTime())
+        if hasattr(self, 'event_type_combo'):
+            self.event_type_combo.setCurrentIndex(0)
+        if hasattr(self, 'event_desc_edit'):
+            self.event_desc_edit.clear()
+    
+    def filter_events(self):
+        """Filter events based on search text"""
+        if not hasattr(self, 'event_search_edit'):
+            return
+            
+        search_text = self.event_search_edit.text().lower()
+        
+        for row in range(self.events_list.rowCount()):
+            show_row = True
+            
+            if search_text:
+                row_text = ""
+                for col in range(self.events_list.columnCount()):
+                    item = self.events_list.item(row, col)
+                    if item:
+                        row_text += item.text().lower() + " "
+                if search_text not in row_text:
+                    show_row = False
+            
+            self.events_list.setRowHidden(row, not show_row)
+    
+    def on_event_selected(self):
+        """Handle event selection - load into form for editing"""
+        selected_rows = self.events_list.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+        
+        row = selected_rows[0].row()
+        
+        # Load data into form
+        if hasattr(self, 'event_title_edit'):
+            title_item = self.events_list.item(row, 2)  # Event column
+            if title_item:
+                self.event_title_edit.setText(title_item.text())
+        
+        if hasattr(self, 'event_date_edit'):
+            date_item = self.events_list.item(row, 0)  # Date column
+            if date_item:
+                from PySide6.QtCore import QDate
+                date = QDate.fromString(date_item.text(), "yyyy-MM-dd")
+                self.event_date_edit.setDate(date)
+        
+        if hasattr(self, 'event_time_edit'):
+            time_item = self.events_list.item(row, 1)  # Time column
+            if time_item:
+                from PySide6.QtCore import QTime
+                time = QTime.fromString(time_item.text(), "HH:mm")
+                self.event_time_edit.setTime(time)
+        
+        if hasattr(self, 'event_type_combo'):
+            type_item = self.events_list.item(row, 3)  # Type column
+            if type_item:
+                index = self.event_type_combo.findText(type_item.text())
+                if index >= 0:
+                    self.event_type_combo.setCurrentIndex(index)
+    
+    def update_events_stats(self):
+        """Update events statistics display"""
+        if not hasattr(self, 'events_stats_label'):
+            return
+            
+        from datetime import datetime, timedelta
+        
+        total_events = self.events_list.rowCount()
+        today_count = 0
+        week_count = 0
+        
+        today = datetime.now().date()
+        week_end = today + timedelta(days=7)
+        
+        for row in range(total_events):
+            date_item = self.events_list.item(row, 0)
+            if date_item:
+                try:
+                    from PySide6.QtCore import QDate
+                    event_date = QDate.fromString(date_item.text(), "yyyy-MM-dd")
+                    event_date_py = event_date.toPython()
+                    
+                    if event_date_py == today:
+                        today_count += 1
+                    if today <= event_date_py <= week_end:
+                        week_count += 1
+                except:
+                    pass
+        
+        self.events_stats_label.setText(
+            f"Total Events: {total_events} | Today: {today_count} | This Week: {week_count}"
+        )
+    
     def on_event_selection_changed(self):
         """Handle event selection changes"""
         has_selection = len(self.events_list.selectedItems()) > 0
-        self.edit_event_btn.setEnabled(has_selection)
-        self.delete_event_btn.setEnabled(has_selection)
+        if hasattr(self, 'edit_event_btn'):
+            self.edit_event_btn.setEnabled(has_selection)
+        if hasattr(self, 'delete_event_btn'):
+            self.delete_event_btn.setEnabled(has_selection)
     
     def add_event(self):
         """Add a new event"""

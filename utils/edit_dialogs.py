@@ -311,6 +311,16 @@ class RecipeEditDialog(BaseEditDialog):
         self.load_categories()
         form_layout.addRow("Category:", self.category_combo)
         
+        # Type
+        self.type_combo = QComboBox()
+        self.type_combo.addItems([
+            "Appetizer", "Main Course", "Side Dish", "Dessert", "Beverage", 
+            "Breakfast", "Lunch", "Dinner", "Snack", "Soup", "Salad", 
+            "Bread", "Pasta", "Pizza", "Sandwich", "Wrap", "Sauce", 
+            "Dressing", "Marinade", "Dip", "Spread", "Condiment", "Other"
+        ])
+        form_layout.addRow("Type:", self.type_combo)
+        
         # Prep Time
         self.prep_time_edit = QLineEdit()
         self.prep_time_edit.setPlaceholderText("e.g., 15 min")
@@ -374,6 +384,37 @@ class RecipeEditDialog(BaseEditDialog):
         image_layout.addLayout(image_btn_layout)
         
         left_layout.addWidget(image_group)
+        
+        # Gluten-Free Conversion
+        gf_group = QGroupBox("Gluten-Free Conversion")
+        gf_layout = QVBoxLayout(gf_group)
+        
+        change_to_gf_btn = QPushButton("🌾 Change to GF")
+        change_to_gf_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        change_to_gf_btn.clicked.connect(self._make_gluten_free)
+        gf_layout.addWidget(change_to_gf_btn)
+        
+        gf_info_label = QLabel("Analyze and convert recipe ingredients to gluten-free alternatives")
+        gf_info_label.setStyleSheet("color: #666; font-size: 11px; margin-top: 4px;")
+        gf_info_label.setWordWrap(True)
+        gf_layout.addWidget(gf_info_label)
+        
+        left_layout.addWidget(gf_group)
         left_layout.addStretch()
         
         # Right side - Ingredients and Instructions
@@ -386,7 +427,7 @@ class RecipeEditDialog(BaseEditDialog):
         
         self.ingredients_table = QTableWidget()
         self.ingredients_table.setColumnCount(2)
-        self.ingredients_table.setHorizontalHeaderLabels(["Ingredient", "Amount"])
+        self.ingredients_table.setHorizontalHeaderLabels(["Amount", "Ingredient"])
         self.ingredients_table.horizontalHeader().setStretchLastSection(True)
         self.ingredients_table.setMinimumHeight(200)
         self.ingredients_table.setMaximumHeight(300)
@@ -430,14 +471,18 @@ class RecipeEditDialog(BaseEditDialog):
         
         ingredients_layout.addWidget(self.ingredients_table)
         
+        # Add/Remove ingredient buttons
         ingredients_btn_layout = QHBoxLayout()
         add_ingredient_btn = QPushButton("Add Ingredient")
         add_ingredient_btn.clicked.connect(self.add_ingredient)
         remove_ingredient_btn = QPushButton("Remove Ingredient")
         remove_ingredient_btn.clicked.connect(self.remove_ingredient)
+        paste_ingredients_btn = QPushButton("Paste Ingredients")
+        paste_ingredients_btn.clicked.connect(self.paste_ingredients)
         
         ingredients_btn_layout.addWidget(add_ingredient_btn)
         ingredients_btn_layout.addWidget(remove_ingredient_btn)
+        ingredients_btn_layout.addWidget(paste_ingredients_btn)
         ingredients_btn_layout.addStretch()
         ingredients_layout.addLayout(ingredients_btn_layout)
         
@@ -448,7 +493,30 @@ class RecipeEditDialog(BaseEditDialog):
         self.instructions_edit = QTextEdit()
         self.instructions_edit.setMinimumHeight(200)
         self.instructions_edit.setMaximumHeight(300)
-        self.instructions_edit.setPlaceholderText("Enter cooking instructions...")
+        self.instructions_edit.setPlaceholderText(
+            "Enter cooking instructions...\n\n"
+            "Tips:\n"
+            "• Use numbered steps for clarity\n"
+            "• Include cooking times and temperatures\n"
+            "• Mention when to check for doneness\n"
+            "• Right-click for copy/paste options"
+        )
+        
+        # Add copy/paste buttons for instructions
+        instructions_btn_layout = QHBoxLayout()
+        copy_instructions_btn = QPushButton("📋 Copy Instructions")
+        copy_instructions_btn.clicked.connect(self._copy_instructions)
+        paste_instructions_btn = QPushButton("📥 Paste Instructions")
+        paste_instructions_btn.clicked.connect(self._paste_instructions)
+        clear_instructions_btn = QPushButton("🗑️ Clear Instructions")
+        clear_instructions_btn.clicked.connect(self._clear_instructions)
+        
+        instructions_btn_layout.addWidget(copy_instructions_btn)
+        instructions_btn_layout.addWidget(paste_instructions_btn)
+        instructions_btn_layout.addWidget(clear_instructions_btn)
+        instructions_btn_layout.addStretch()
+        
+        instructions_layout.addLayout(instructions_btn_layout)
         instructions_layout.addWidget(self.instructions_edit)
         
         right_layout.addWidget(ingredients_group)
@@ -460,19 +528,404 @@ class RecipeEditDialog(BaseEditDialog):
         main_splitter.setSizes([400, 500])  # Set initial sizes
         
         self.content_layout.addWidget(main_splitter)
+        
+        # Enable right-click context menu on the dialog
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_edit_recipe_context_menu)
     
     def add_ingredient(self):
         """Add a new ingredient row"""
         row = self.ingredients_table.rowCount()
         self.ingredients_table.insertRow(row)
-        self.ingredients_table.setItem(row, 0, QTableWidgetItem(""))
-        self.ingredients_table.setItem(row, 1, QTableWidgetItem(""))
+        self.ingredients_table.setItem(row, 0, QTableWidgetItem(""))  # Amount
+        self.ingredients_table.setItem(row, 1, QTableWidgetItem(""))  # Ingredient name
     
     def remove_ingredient(self):
         """Remove selected ingredient row"""
         current_row = self.ingredients_table.currentRow()
         if current_row >= 0:
             self.ingredients_table.removeRow(current_row)
+    
+    def paste_ingredients(self):
+        """Open dialog to paste ingredients text and parse into table"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QMessageBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Paste Ingredients")
+        dialog.setModal(True)
+        dialog.resize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Header
+        header_label = QLabel("Paste Ingredients Text")
+        header_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(header_label)
+        
+        # Instructions
+        instructions_label = QLabel(
+            "Paste your ingredients list below (one ingredient per line).\n"
+            "Examples:\n"
+            "• 2 cups gluten-free flour\n"
+            "• 2 eggs\n"
+            "• 1 1/2 cups milk\n"
+            "• salt"
+        )
+        instructions_label.setStyleSheet("color: #666; margin-bottom: 10px;")
+        layout.addWidget(instructions_label)
+        
+        # Text input
+        self.paste_text_edit = QTextEdit()
+        self.paste_text_edit.setPlaceholderText(
+            "Paste ingredients here...\n\n"
+            "Example:\n"
+            "2 cups gluten-free flour\n"
+            "2 eggs\n"
+            "1 1/2 cups milk\n"
+            "2 tbsp sugar\n"
+            "salt"
+        )
+        self.paste_text_edit.setMinimumHeight(200)
+        layout.addWidget(self.paste_text_edit)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        parse_btn = QPushButton("Parse & Add to Recipe")
+        parse_btn.clicked.connect(lambda: self._parse_and_add_ingredients(dialog))
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addWidget(parse_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
+    
+    def _parse_and_add_ingredients(self, dialog):
+        """Parse pasted ingredients text and add to table"""
+        import re
+        
+        text = self.paste_text_edit.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(dialog, "No Text", "Please paste some ingredients text first.")
+            return
+        
+        lines = text.split('\n')
+        added_count = 0
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Remove bullet points and other prefixes
+            line = re.sub(r'^[\-\*\•\d\.\)\s]+', '', line).strip()
+            if not line:
+                continue
+            
+            # Try to parse amount and ingredient
+            # Pattern: "2 cups flour" or "salt"
+            match = re.match(r'^([\d\s\/\.]+)\s+([a-zA-Z]+)\s+(.+)$', line)
+            if match:
+                amount = match.group(1).strip()
+                unit = match.group(2).strip()
+                name = match.group(3).strip()
+                amount_text = f"{amount} {unit}"
+            else:
+                # Just ingredient name
+                amount_text = ""
+                name = line
+            
+            # Add to table
+            row = self.ingredients_table.rowCount()
+            self.ingredients_table.insertRow(row)
+            self.ingredients_table.setItem(row, 0, QTableWidgetItem(amount_text))
+            self.ingredients_table.setItem(row, 1, QTableWidgetItem(name))
+            added_count += 1
+        
+        if added_count > 0:
+            QMessageBox.information(dialog, "Success", f"Added {added_count} ingredients to the recipe.")
+            dialog.accept()
+        else:
+            QMessageBox.warning(dialog, "No Ingredients", "No valid ingredients found in the text.")
+    
+    def _show_edit_recipe_context_menu(self, position):
+        """Show right-click context menu for edit recipe dialog"""
+        from PySide6.QtWidgets import QMenu
+        
+        menu = QMenu(self)
+        
+        # Edit-specific actions
+        paste_ingredients_action = menu.addAction("📋 Paste Ingredients")
+        paste_ingredients_action.triggered.connect(self.paste_ingredients)
+        
+        menu.addSeparator()
+        
+        add_ingredient_action = menu.addAction("➕ Add Ingredient")
+        add_ingredient_action.triggered.connect(self.add_ingredient)
+        
+        remove_ingredient_action = menu.addAction("➖ Remove Ingredient")
+        remove_ingredient_action.triggered.connect(self.remove_ingredient)
+        
+        menu.addSeparator()
+        
+        clear_ingredients_action = menu.addAction("🗑️ Clear All Ingredients")
+        clear_ingredients_action.triggered.connect(self._clear_all_ingredients)
+        
+        menu.addSeparator()
+        
+        # Instructions actions
+        copy_instructions_action = menu.addAction("📋 Copy Instructions")
+        copy_instructions_action.triggered.connect(self._copy_instructions)
+        
+        paste_instructions_action = menu.addAction("📥 Paste Instructions")
+        paste_instructions_action.triggered.connect(self._paste_instructions)
+        
+        clear_instructions_action = menu.addAction("🗑️ Clear Instructions")
+        clear_instructions_action.triggered.connect(self._clear_instructions)
+        
+        # Recipe actions
+        make_gf_action = menu.addAction("🌾 Change to GF")
+        make_gf_action.triggered.connect(self._make_gluten_free)
+        
+        duplicate_action = menu.addAction("📋 Duplicate Recipe")
+        duplicate_action.triggered.connect(self._duplicate_recipe)
+        
+        menu.addSeparator()
+        
+        # Help actions
+        help_action = menu.addAction("❓ Help")
+        help_action.triggered.connect(self._show_edit_help)
+        
+        # Show menu at cursor position
+        global_pos = self.mapToGlobal(position)
+        menu.exec(global_pos)
+    
+    def _clear_all_ingredients(self):
+        """Clear all ingredients from the table"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        reply = QMessageBox.question(self, "Clear Ingredients", 
+            "Are you sure you want to clear all ingredients?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            self.ingredients_table.setRowCount(0)
+    
+    def _make_gluten_free(self):
+        """Analyze current recipe and suggest gluten-free alternatives"""
+        try:
+            from services.gluten_free_converter import gluten_free_converter
+            
+            # Get current recipe data
+            recipe_data = self.get_data()
+            
+            # Analyze the recipe
+            analysis = gluten_free_converter.analyze_recipe(recipe_data)
+            
+            if not analysis['has_gluten']:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Already Gluten-Free", 
+                    "This recipe is already gluten-free! No conversion needed.")
+                return
+            
+            # Show analysis and apply changes
+            self._show_gf_edit_analysis(analysis)
+            
+        except ImportError:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Service Unavailable", 
+                "Gluten-free converter service is not available.")
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Failed to analyze recipe: {str(e)}")
+    
+    def _show_gf_edit_analysis(self, analysis):
+        """Show gluten-free analysis and apply changes to current recipe"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QGroupBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Gluten-Free Conversion")
+        dialog.setModal(True)
+        dialog.resize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Header
+        header_label = QLabel("Gluten-Free Conversion")
+        header_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(header_label)
+        
+        # Summary
+        summary_group = QGroupBox("Analysis Summary")
+        summary_layout = QVBoxLayout(summary_group)
+        
+        gluten_count = len(analysis['gluten_ingredients'])
+        summary_text = f"""
+Found {gluten_count} gluten-containing ingredients
+Conversion Difficulty: {analysis['difficulty_level']}
+Estimated Cost Change: {analysis['estimated_cost_change']}
+        """
+        summary_label = QLabel(summary_text.strip())
+        summary_layout.addWidget(summary_label)
+        layout.addWidget(summary_group)
+        
+        # Gluten ingredients found
+        if analysis['gluten_ingredients']:
+            gluten_group = QGroupBox("Suggested Replacements")
+            gluten_layout = QVBoxLayout(gluten_group)
+            
+            gluten_text = ""
+            for item in analysis['gluten_ingredients']:
+                gluten_text += f"• {item['amount']} {item['original']} → {item['replacement']}\n"
+            
+            gluten_label = QLabel(gluten_text.strip())
+            gluten_label.setWordWrap(True)
+            gluten_layout.addWidget(gluten_label)
+            layout.addWidget(gluten_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        apply_btn = QPushButton("Apply Changes")
+        apply_btn.clicked.connect(lambda: self._apply_gf_changes(dialog, analysis))
+        button_layout.addWidget(apply_btn)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
+    
+    def _apply_gf_changes(self, dialog, analysis):
+        """Apply gluten-free changes to the current recipe"""
+        try:
+            from services.gluten_free_converter import gluten_free_converter
+            
+            # Get current recipe data
+            recipe_data = self.get_data()
+            
+            # Convert the recipe
+            converted_recipe = gluten_free_converter.convert_recipe(recipe_data)
+            
+            # Update the form with converted data
+            self.set_data(converted_recipe)
+            
+            dialog.accept()
+            
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Success", 
+                "Recipe converted to gluten-free! Review the changes and save when ready.")
+            
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Failed to apply changes: {str(e)}")
+    
+    def _duplicate_recipe(self):
+        """Duplicate the current recipe"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        reply = QMessageBox.question(self, "Duplicate Recipe", 
+            "Create a copy of this recipe?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            # Get current data
+            recipe_data = self.get_data()
+            
+            # Modify name to indicate it's a copy
+            original_name = recipe_data.get('name', 'Recipe')
+            recipe_data['name'] = f"{original_name} (Copy)"
+            
+            # Clear ID so it creates a new recipe
+            recipe_data.pop('id', None)
+            
+            # Set the modified data
+            self.set_data(recipe_data)
+            
+            QMessageBox.information(self, "Recipe Duplicated", 
+                "Recipe duplicated! You can now modify and save the copy.")
+    
+    def _show_edit_help(self):
+        """Show help for editing recipes"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        help_text = """
+Recipe Editing Help:
+
+• Use the table to add ingredients one at a time
+• Click "Paste Ingredients" to bulk import from text
+• Right-click anywhere for more options
+• Use "Make Gluten-Free" to convert ingredients
+• Click "Duplicate Recipe" to create a copy
+• Save changes when you're done editing
+
+Tips:
+• Ingredients can be pasted from any text source
+• Amounts and ingredients are parsed automatically
+• Gluten-free conversion suggests alternatives
+• All changes are saved to the database
+        """
+        
+        QMessageBox.information(self, "Recipe Editing Help", help_text.strip())
+    
+    def _copy_instructions(self):
+        """Copy instructions to clipboard"""
+        from PySide6.QtWidgets import QApplication
+        
+        instructions_text = self.instructions_edit.toPlainText()
+        if instructions_text.strip():
+            clipboard = QApplication.clipboard()
+            clipboard.setText(instructions_text)
+            
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Copied", "Instructions copied to clipboard!")
+        else:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Text", "No instructions to copy.")
+    
+    def _paste_instructions(self):
+        """Paste instructions from clipboard"""
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        
+        clipboard = QApplication.clipboard()
+        clipboard_text = clipboard.text()
+        
+        if clipboard_text.strip():
+            # Ask user if they want to replace or append
+            reply = QMessageBox.question(self, "Paste Instructions", 
+                "Do you want to replace current instructions or append to them?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                # Replace
+                self.instructions_edit.setPlainText(clipboard_text)
+            else:
+                # Append
+                current_text = self.instructions_edit.toPlainText()
+                if current_text.strip():
+                    new_text = current_text + "\n\n" + clipboard_text
+                else:
+                    new_text = clipboard_text
+                self.instructions_edit.setPlainText(new_text)
+            
+            QMessageBox.information(self, "Pasted", "Instructions pasted successfully!")
+        else:
+            QMessageBox.warning(self, "No Text", "No text found in clipboard.")
+    
+    def _clear_instructions(self):
+        """Clear all instructions"""
+        from PySide6.QtWidgets import QMessageBox
+        
+        reply = QMessageBox.question(self, "Clear Instructions", 
+            "Are you sure you want to clear all instructions?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            self.instructions_edit.clear()
+            QMessageBox.information(self, "Cleared", "Instructions cleared.")
     
     def populate_fields(self):
         """Populate fields with existing data"""
@@ -482,6 +935,12 @@ class RecipeEditDialog(BaseEditDialog):
         index = self.category_combo.findText(category)
         if index >= 0:
             self.category_combo.setCurrentIndex(index)
+        
+        # Set type
+        recipe_type = self.data.get('type', 'Main Course')
+        index = self.type_combo.findText(recipe_type)
+        if index >= 0:
+            self.type_combo.setCurrentIndex(index)
         
         self.prep_time_edit.setText(self.data.get('prep_time', ''))
         self.cook_time_edit.setText(self.data.get('cook_time', ''))
@@ -501,17 +960,17 @@ class RecipeEditDialog(BaseEditDialog):
         self.ingredients_table.setRowCount(len(ingredients))
         for i, ingredient in enumerate(ingredients):
             if isinstance(ingredient, dict):
-                self.ingredients_table.setItem(i, 0, QTableWidgetItem(ingredient.get('name', '')))
-                self.ingredients_table.setItem(i, 1, QTableWidgetItem(ingredient.get('amount', '')))
+                self.ingredients_table.setItem(i, 0, QTableWidgetItem(ingredient.get('amount', '')))
+                self.ingredients_table.setItem(i, 1, QTableWidgetItem(ingredient.get('name', '')))
             else:
-                self.ingredients_table.setItem(i, 0, QTableWidgetItem(str(ingredient)))
+                self.ingredients_table.setItem(i, 1, QTableWidgetItem(str(ingredient)))
     
     def get_data(self) -> Dict[str, Any]:
         """Get the edited data"""
         ingredients = []
         for row in range(self.ingredients_table.rowCount()):
-            name_item = self.ingredients_table.item(row, 0)
-            amount_item = self.ingredients_table.item(row, 1)
+            amount_item = self.ingredients_table.item(row, 0)
+            name_item = self.ingredients_table.item(row, 1)
             if name_item and name_item.text().strip():
                 ingredients.append({
                     'name': name_item.text().strip(),
@@ -522,6 +981,7 @@ class RecipeEditDialog(BaseEditDialog):
             'name': self.name_edit.text().strip(),
             'category': self.category_combo.currentText(),
             'category_id': self.category_combo.currentData(),
+            'type': self.type_combo.currentText(),
             'prep_time': self.prep_time_edit.text().strip(),
             'cook_time': self.cook_time_edit.text().strip(),
             'servings': self.servings_spin.value(),

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Import/Export Service for Celiogix Application
+Import/Export Service for CeliacShield Application
 Handles bulk import/export operations for all panels
 """
 
@@ -393,7 +393,7 @@ class ImportExportService:
             if include_metadata:
                 export_data['metadata'] = {
                     'version': '1.0',
-                    'application': 'Celiogix',
+                    'application': 'CeliacShield',
                     'format': 'json'
                 }
             
@@ -430,7 +430,7 @@ class ImportExportService:
                         'Panel': panel_name,
                         'Export Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'Record Count': len(data),
-                        'Application': 'Celiogix',
+                        'Application': 'CeliacShield',
                         'Version': '1.0'
                     }])
                     metadata_df.to_excel(writer, sheet_name='Metadata', index=False)
@@ -553,7 +553,7 @@ class ImportExportService:
                 content = f.read()
             
             # Create metadata comment
-            metadata = f"# Celiogix Export - {panel_name}\n"
+            metadata = f"# CeliacShield Export - {panel_name}\n"
             metadata += f"# Export Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             metadata += f"# Record Count: {record_count}\n"
             metadata += f"# Application Version: 1.0\n"
@@ -1038,10 +1038,10 @@ class ImportExportService:
         """Create a summary file for the export"""
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write("Celiogix Data Export Summary\n")
+                f.write("CeliacShield Data Export Summary\n")
                 f.write("=" * 40 + "\n\n")
                 f.write(f"Export Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Application: Celiogix v1.0\n")
+                f.write(f"Application: CeliacShield v1.0\n")
                 f.write(f"Exported Panels: {', '.join(panels)}\n\n")
                 
                 # Add record counts

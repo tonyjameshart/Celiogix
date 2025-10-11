@@ -1,4 +1,4 @@
-# 📱 Android AAB Configuration Reference for Celiogix Mobile
+# 📱 Android AAB Configuration Reference for CeliacShield Mobile
 
 ## Key Configuration Files
 
@@ -119,7 +119,7 @@ import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.celiogix.mobile',
-  appName: 'Celiogix Mobile',
+  appName: 'CeliacShield Mobile',
   webDir: 'www',
   server: {
     androidScheme: 'https'
@@ -145,7 +145,7 @@ export default config;
 #!/bin/bash
 # build-aab.sh
 
-echo "🚀 Building Celiogix Mobile AAB..."
+echo "🚀 Building CeliacShield Mobile AAB..."
 
 # Clean and build
 ionic capacitor clean android
@@ -190,7 +190,7 @@ bundletool build-apks --bundle=app-release.aab --output=app.apks
 bundletool install-apks --apks=app.apks
 ```
 
-## Key AAB Features for Celiogix
+## Key AAB Features for CeliacShield
 
 1. **Dynamic Feature Modules**: Barcode scanner and restaurant finder as on-demand modules
 2. **Asset Packs**: Large gluten-free product database delivered efficiently
@@ -198,4 +198,4 @@ bundletool install-apks --apks=app.apks
 4. **Density Splits**: Optimized resources for different screen densities
 5. **ABI Splits**: Architecture-specific optimizations
 
-This configuration ensures optimal AAB performance and distribution for the Celiogix Mobile Companion.
+This configuration ensures optimal AAB performance and distribution for the CeliacShield Mobile Companion.

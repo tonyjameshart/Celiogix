@@ -805,7 +805,7 @@ def main():
     # Set application properties
     app.setApplicationName("Mobile Health Logging Demo")
     app.setApplicationVersion("1.0")
-    app.setOrganizationName("Celiogix")
+    app.setOrganizationName("CeliacShield")
     
     # Create and show demo window
     demo = MobileHealthLoggingDemo()

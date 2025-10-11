@@ -1,12 +1,12 @@
-# path: panels/cookbook_panel_pyside6.py
-"""
-Cookbook Panel for PySide6 Application
-"""
+# path: panels/cookbook_panel.py
 
 from typing import Optional
+import os
+import re
+import requests
 
-from PySide6.QtCore import QMarginsF, Qt
-from PySide6.QtGui import QFont, QPageLayout, QPageSize, QTextDocument
+from PySide6.QtCore import QMarginsF, Qt, QUrl
+from PySide6.QtGui import QFont, QPageLayout, QPageSize, QTextDocument, QPixmap, QDesktopServices
 from PySide6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 )
 
+from utils.accessibility import announce_for_screen_reader
 from panels.base_panel import BasePanel
 from panels.context_menu_mixin import CookbookContextMenuMixin
 from utils.custom_widgets import NoSelectionTableWidget
@@ -23,7 +24,6 @@ from panels.cookbook.recipe_manager import RecipeManager
 from panels.cookbook.recipe_ui_components import RecipeUIComponents
 from panels.cookbook.recipe_dialogs import RecipeDialogs
 from panels.cookbook.recipe_export import RecipeExport
-import re
 
 
 class CookbookPanel(CookbookContextMenuMixin, BasePanel):
@@ -31,17 +31,29 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
     
     def __init__(self, master=None, app=None):
         super().__init__(master, app)
+        self.recipe_dialogs = RecipeDialogs(self)
+        
+        # Cleanup temporary files when panel is destroyed
+        import atexit
+        atexit.register(self.cleanup_temp_files)
     
     def _extract_numeric_value(self, value, default=0):
         """Extract numeric value from string that might contain text like '1 loaf' -> 1"""
         try:
-            if isinstance(value, str):
+            if value is None:
+                return default
+            elif isinstance(value, (int, float)):
+                return int(value)
+            elif isinstance(value, str):
                 # Try to extract number from string like "1 loaf" -> 1
                 numbers = re.findall(r'\d+', value)
                 return int(numbers[0]) if numbers else default
             else:
-                return int(value)
-        except (ValueError, IndexError, TypeError):
+                # Handle any other type by converting to string first
+                str_value = str(value)
+                numbers = re.findall(r'\d+', str_value)
+                return int(numbers[0]) if numbers else default
+        except (ValueError, IndexError, TypeError, AttributeError):
             return default
     
     def setup_ui(self):
@@ -99,13 +111,6 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
         
         # Advanced recipe features
         advanced_layout = QHBoxLayout()
-        self.scale_btn = QPushButton("Scale Recipe")
-        self.scale_btn.clicked.connect(self.scale_recipe)
-        self.scale_btn.setEnabled(False)
-        
-        self.convert_btn = QPushButton("Convert to GF")
-        self.convert_btn.clicked.connect(self.convert_to_gluten_free)
-        self.convert_btn.setEnabled(False)
         
         self.rank_btn = QPushButton("Rank Recipes")
         self.rank_btn.clicked.connect(self.rank_recipes)
@@ -113,8 +118,6 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
         self.analytics_btn = QPushButton("Analytics")
         self.analytics_btn.clicked.connect(self.show_recipe_analytics)
         
-        advanced_layout.addWidget(self.scale_btn)
-        advanced_layout.addWidget(self.convert_btn)
         advanced_layout.addWidget(self.rank_btn)
         advanced_layout.addWidget(self.analytics_btn)
         advanced_layout.addStretch()
@@ -148,21 +151,21 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             if hasattr(self, 'favorite_filter_cb') and self.favorite_filter_cb.isChecked():
                 where_conditions.append("r.is_favorite = 1")
             
-            # Category filter
-            if (hasattr(self, 'category_filter_combo') and 
-                self.category_filter_combo.currentData() is not None):
-                category_id = self.category_filter_combo.currentData()
-                where_conditions.append("rc.category_id = ?")
-                params.append(category_id)
+            # Category filter - use the category column in recipes table
+            if hasattr(self, 'category_combo') and self.category_combo.currentData() != 'all':
+                category_id = self.category_combo.currentData()
+                # Get the category name from the combo box
+                category_name = self.category_combo.currentText()
+                where_conditions.append("r.category = ?")
+                params.append(category_name)
             
             # Build the query
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
             
             cursor.execute(f"""
                 SELECT DISTINCT r.id, r.title, r.instructions, r.prep_time, r.cook_time, r.servings, 
-                       '', r.category, r.tags, '', '', r.is_favorite, r.image_path
+                       r.difficulty, r.category, r.tags, r.description, r.is_favorite, r.image_path
                 FROM recipes r
-                LEFT JOIN recipe_categories rc ON r.id = rc.recipe_id
                 {where_clause}
                 ORDER BY r.title
             """, params)
@@ -173,7 +176,7 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             self.recipe_data_storage.clear()
             
             for row, recipe in enumerate(recipes):
-                recipe_id, title, instructions, prep_time, cook_time, servings, difficulty, category, tags, created_at, updated_at, is_favorite, image_path = recipe
+                recipe_id, title, instructions, prep_time, cook_time, servings, difficulty, category, tags, description, is_favorite, image_path = recipe
                 
                 # Load ingredients for this recipe
                 cursor.execute("""
@@ -196,7 +199,7 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 recipe_data = {
                     "id": recipe_id,
                     "name": title,
-                    "description": instructions or "",
+                    "description": description or "",
                     "prep_time": prep_time or "",
                     "cook_time": cook_time or "",
                     "servings": servings or 1,
@@ -205,9 +208,8 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                     "tags": tags or "",
                     "ingredients": ingredients,
                     "instructions": instructions or "",
-                    "notes": "",
-                    "created_at": created_at,
-                    "updated_at": updated_at
+                    "is_favorite": is_favorite or 0,
+                    "image_path": image_path or ""
                 }
                 
                 # Store full recipe data for card display
@@ -230,9 +232,8 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
         # Load categories for filtering
         self.load_categories()
         
-        # Initialize and display recipes (only if cookbook navigation is set up)
-        if hasattr(self, 'grid_view_btn'):
-            self.refresh_recipe_display()
+        # Initialize and display recipes
+        self.refresh_recipe_display()
     
     def setup_cookbook_navigation(self):
         """Set up the polished cookbook navigation widget"""
@@ -328,17 +329,18 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             """)
         
         # Update category filter combo
-        if category_id is None:
-            # All recipes selected
-            self.category_filter_combo.setCurrentIndex(0)  # "All Categories"
-            print("DEBUG: Showing all recipes")
-        else:
-            # Find and select the category in the combo
-            for i in range(self.category_filter_combo.count()):
-                if self.category_filter_combo.itemData(i) == category_id:
-                    self.category_filter_combo.setCurrentIndex(i)
-                    print(f"DEBUG: Filtering by category: {category_name}")
-                    break
+        if hasattr(self, 'category_combo'):
+            if category_id is None:
+                # All recipes selected
+                self.category_combo.setCurrentIndex(0)  # "All Categories"
+                print("DEBUG: Showing all recipes")
+            else:
+                # Find and select the category in the combo box
+                for i in range(self.category_combo.count()):
+                    if self.category_combo.itemData(i) == str(category_id):
+                        self.category_combo.setCurrentIndex(i)
+                        break
+                print(f"DEBUG: Filtering by category: {category_name}")
         
         # Refresh recipe display
         self.refresh_recipe_display()
@@ -346,12 +348,14 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
     def setup_search_filter_bar(self, parent_layout):
         """Set up search and filter bar"""
         search_filter_widget = QWidget()
-        search_filter_layout = QHBoxLayout(search_filter_widget)
+        search_filter_layout = QVBoxLayout(search_filter_widget)
+        search_filter_layout.setSpacing(15)
         
-        # Search box
+        # Search row with filters on the right
+        search_row_layout = QHBoxLayout()
         search_label = QLabel("🔍")
         search_label.setStyleSheet("font-size: 16px; color: #666;")
-        search_filter_layout.addWidget(search_label)
+        search_row_layout.addWidget(search_label)
         
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search recipes...")
@@ -368,23 +372,42 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             }
         """)
         self.search_edit.textChanged.connect(self.filter_recipes)
-        search_filter_layout.addWidget(self.search_edit)
+        search_row_layout.addWidget(self.search_edit)
         
-        # Category filter - using new category selector (moved below search)
-        from utils.category_selector import CategorySelector
-        self.category_selector = CategorySelector(title="Category")
-        self.category_selector.category_changed.connect(self._on_category_changed)
-        search_filter_layout.addWidget(self.category_selector)
+        # Add spacing between search and filters
+        search_row_layout.addSpacing(20)
         
-        # Favorite filter checkbox
+        # Favorite filter checkbox (moved to search row)
         self.favorite_filter_cb = QCheckBox("Favorites Only")
+        self.favorite_filter_cb.setStyleSheet("""
+            QCheckBox {
+                font-size: 13px;
+                color: #495057;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border: 2px solid #e0e0e0;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4caf50;
+                border-color: #2e7d32;
+                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xMC41IDFMNC41IDdMMSA0IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
+            }
+            QCheckBox::indicator:hover {
+                border-color: #66bb6a;
+            }
+        """)
         self.favorite_filter_cb.stateChanged.connect(self.filter_recipes)
-        search_filter_layout.addWidget(self.favorite_filter_cb)
+        search_row_layout.addWidget(self.favorite_filter_cb)
         
-        # Sort dropdown
+        # Sort dropdown (moved to search row)
         sort_label = QLabel("Sort by:")
-        sort_label.setStyleSheet("color: #666; font-weight: bold;")
-        search_filter_layout.addWidget(sort_label)
+        sort_label.setStyleSheet("color: #666; font-weight: 500; font-size: 13px;")
+        search_row_layout.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
         self.sort_combo.addItems([
@@ -397,55 +420,70 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 border-radius: 6px;
                 background-color: white;
                 min-width: 120px;
+                font-size: 13px;
+            }
+            QComboBox:focus {
+                border-color: #3498db;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #666;
+                margin-right: 5px;
             }
         """)
         self.sort_combo.currentTextChanged.connect(self.sort_recipes)
-        search_filter_layout.addWidget(self.sort_combo)
+        search_row_layout.addWidget(self.sort_combo)
         
-        search_filter_layout.addStretch()
+        search_row_layout.addStretch()
+        search_filter_layout.addLayout(search_row_layout)
         
-        # View toggle buttons
-        self.view_toggle_layout = QHBoxLayout()
+        # Category filter - using improved dropdown selector
+        category_row_layout = QHBoxLayout()
+        category_label = QLabel("Category:")
+        category_label.setStyleSheet("font-weight: 500; color: #495057; min-width: 80px;")
+        category_row_layout.addWidget(category_label)
         
-        self.grid_view_btn = QPushButton("⊞ Grid")
-        self.grid_view_btn.setCheckable(True)
-        self.grid_view_btn.setChecked(True)
-        self.grid_view_btn.clicked.connect(lambda: self.set_view_mode('grid'))
-        self.grid_view_btn.setStyleSheet("""
-            QPushButton {
-                padding: 6px 12px;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
+        self.category_combo = QComboBox()
+        self.category_combo.setStyleSheet("""
+            QComboBox {
+                padding: 8px 12px;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                font-size: 14px;
                 background-color: white;
+                min-width: 150px;
             }
-            QPushButton:checked {
-                background-color: #3498db;
-                color: white;
+            QComboBox:focus {
                 border-color: #3498db;
             }
-        """)
-        self.view_toggle_layout.addWidget(self.grid_view_btn)
-        
-        self.list_view_btn = QPushButton("☰ List")
-        self.list_view_btn.setCheckable(True)
-        self.list_view_btn.clicked.connect(lambda: self.set_view_mode('list'))
-        self.list_view_btn.setStyleSheet("""
-            QPushButton {
-                padding: 6px 12px;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #666;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
                 background-color: white;
-            }
-            QPushButton:checked {
-                background-color: #3498db;
-                color: white;
-                border-color: #3498db;
+                selection-background-color: #3498db;
             }
         """)
-        self.view_toggle_layout.addWidget(self.list_view_btn)
-        
-        search_filter_layout.addLayout(self.view_toggle_layout)
-        
+        self.category_combo.currentTextChanged.connect(self._on_category_combo_changed)
+        category_row_layout.addWidget(self.category_combo)
+        category_row_layout.addStretch()
+        search_filter_layout.addLayout(category_row_layout)
         
         parent_layout.addWidget(search_filter_widget)
     
@@ -667,6 +705,219 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
         
         return card
     
+    def create_modern_recipe_list_item(self, recipe_data):
+        """Create a modern recipe list item widget"""
+        item_widget = QFrame(self.cards_container)
+        item_widget.setFrameStyle(QFrame.NoFrame)
+        item_widget.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 12px;
+                margin: 4px 8px;
+            }
+            QFrame:hover {
+                border: 2px solid #4CAF50;
+                background-color: #f8fffe;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+        """)
+        item_widget.setFixedHeight(100)
+        item_widget.setCursor(Qt.PointingHandCursor)
+        
+        # Store recipe data
+        item_widget.recipe_data = recipe_data
+        
+        # Create main layout
+        main_layout = QHBoxLayout(item_widget)
+        main_layout.setContentsMargins(12, 8, 12, 8)
+        main_layout.setSpacing(12)
+        
+        # Recipe image/icon (left side)
+        image_frame = QFrame()
+        image_frame.setFixedSize(80, 80)
+        image_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f5f5f5;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+            }
+        """)
+        
+        image_layout = QVBoxLayout(image_frame)
+        image_layout.setContentsMargins(4, 4, 4, 4)
+        image_layout.setAlignment(Qt.AlignCenter)
+        
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignCenter)
+        
+        # Try to load recipe image
+        recipe_id = recipe_data.get('id')
+        if recipe_id:
+            image_path = self.get_recipe_image_path(recipe_id)
+            if image_path and os.path.exists(image_path):
+                pixmap = QPixmap(image_path)
+                scaled_pixmap = pixmap.scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                image_label.setPixmap(scaled_pixmap)
+            else:
+                # Use category icon as fallback
+                category_icon = self._get_category_icon(recipe_data.get('category', 'main_course'))
+                image_label.setText(category_icon)
+                image_label.setStyleSheet("""
+                    QLabel {
+                        font-size: 32px;
+                        color: #4CAF50;
+                    }
+                """)
+        
+        image_layout.addWidget(image_label)
+        main_layout.addWidget(image_frame)
+        
+        # Main content area (center)
+        content_layout = QVBoxLayout()
+        content_layout.setSpacing(4)
+        
+        # Recipe title
+        title_label = QLabel(recipe_data.get('title', 'Untitled Recipe'))
+        title_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 16px;
+                color: #2c3e50;
+                padding: 2px 0;
+            }
+        """)
+        content_layout.addWidget(title_label)
+        
+        # Category and description
+        category = recipe_data.get('category', 'Unknown').replace('_', ' ').title()
+        description = recipe_data.get('description', '')[:100] + '...' if len(recipe_data.get('description', '')) > 100 else recipe_data.get('description', '')
+        
+        info_label = QLabel(f"📁 {category}")
+        if description:
+            info_label.setText(f"📁 {category} • {description}")
+        info_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                color: #666;
+                padding: 2px 0;
+            }
+        """)
+        info_label.setWordWrap(True)
+        content_layout.addWidget(info_label)
+        
+        # Recipe details (time, difficulty, servings)
+        details_layout = QHBoxLayout()
+        details_layout.setSpacing(12)
+        
+        # Cooking time
+        prep_time = recipe_data.get('prep_time', '0')
+        cook_time = recipe_data.get('cook_time', '0')
+        total_time = self._calculate_total_time(prep_time, cook_time)
+        
+        time_label = QLabel(f"⏱ {total_time}")
+        time_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #666;
+                background-color: #e3f2fd;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+        """)
+        details_layout.addWidget(time_label)
+        
+        # Difficulty
+        difficulty = recipe_data.get('difficulty', 'Easy')
+        difficulty_label = QLabel(f"📊 {difficulty}")
+        difficulty_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #666;
+                background-color: #f3e5f5;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+        """)
+        details_layout.addWidget(difficulty_label)
+        
+        # Servings
+        servings = recipe_data.get('servings', 'N/A')
+        servings_label = QLabel(f"👥 {servings}")
+        servings_label.setStyleSheet("""
+            QLabel {
+                font-size: 11px;
+                color: #666;
+                background-color: #e8f5e8;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+        """)
+        details_layout.addWidget(servings_label)
+        
+        details_layout.addStretch()
+        content_layout.addLayout(details_layout)
+        
+        main_layout.addLayout(content_layout, 1)  # Stretch factor 1
+        
+        # Action area (right side)
+        action_layout = QVBoxLayout()
+        action_layout.setAlignment(Qt.AlignCenter)
+        action_layout.setSpacing(8)
+        
+        # Favorite button
+        favorite_btn = QPushButton("⭐")
+        favorite_btn.setFixedSize(32, 32)
+        favorite_btn.setCheckable(True)
+        favorite_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #fff3cd;
+                border: 1px solid #ffeaa7;
+                border-radius: 16px;
+                font-size: 14px;
+            }
+            QPushButton:checked {
+                background-color: #ffd700;
+                border-color: #ffb347;
+            }
+            QPushButton:hover {
+                background-color: #ffeb3b;
+            }
+        """)
+        
+        # Set favorite state
+        if recipe_data.get('is_favorite', False):
+            favorite_btn.setChecked(True)
+        
+        favorite_btn.clicked.connect(lambda: self._toggle_recipe_favorite(recipe_data.get('id')))
+        action_layout.addWidget(favorite_btn)
+        
+        # View button
+        view_btn = QPushButton("👁")
+        view_btn.setFixedSize(32, 32)
+        view_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e3f2fd;
+                border: 1px solid #bbdefb;
+                border-radius: 16px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #2196f3;
+                color: white;
+            }
+        """)
+        view_btn.clicked.connect(lambda: self.view_recipe_by_data(recipe_data))
+        action_layout.addWidget(view_btn)
+        
+        action_layout.addStretch()
+        main_layout.addLayout(action_layout)
+        
+        # Click handler for the entire item
+        item_widget.mousePressEvent = lambda event: self.select_recipe_card(item_widget)
+        
+        return item_widget
+    
     def _get_category_icon(self, category_name):
         """Get appropriate icon for category"""
         category_icons = {
@@ -715,23 +966,29 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
         self.current_recipe_id = card.recipe_data.get('id')
     
     def set_view_mode(self, mode):
-        """Set the view mode (grid or list)"""
-        if mode == 'grid':
-            self.grid_view_btn.setChecked(True)
-            self.list_view_btn.setChecked(False)
-            self.refresh_recipe_display()
-        else:
-            self.grid_view_btn.setChecked(False)
-            self.list_view_btn.setChecked(True)
-            self.refresh_recipe_display()
+        """Set the view mode (grid or list) - now defaults to grid view only"""
+        # Always use grid view since we removed the view toggle buttons
+        self.refresh_recipe_display()
     
-    def _on_category_changed(self, category_id: str, category_name: str):
-        """Handle category selection change"""
+    def _on_category_combo_changed(self, category_name: str):
+        """Handle category selection change from combo box"""
         self.filter_recipes()
+    
+    def get_category_id_by_name(self, category_name: str) -> str:
+        """Get category ID by category name - now returns the category name directly"""
+        if category_name == "All Categories":
+            return "all"
+        return category_name
     
     def filter_recipes(self):
         """Filter recipes based on search text"""
-        category_id, category_name = self.category_selector.get_selected_category()
+        if hasattr(self, 'category_combo'):
+            category_name = self.category_combo.currentText()
+            category_id = self.get_category_id_by_name(category_name)
+        else:
+            category_name = "All"
+            category_id = "all"
+            
         print(f"DEBUG: Filtering recipes - Search: '{self.search_edit.text()}', "
               f"Category: '{category_name}' (ID: {category_id}), "
               f"Favorites: {self.favorite_filter_cb.isChecked()}")
@@ -768,11 +1025,8 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             # Get filtered and sorted recipes
             recipes = self.get_filtered_recipes()
             
-            # Create and add recipe cards
-            if self.grid_view_btn.isChecked():
-                self.display_grid_view(recipes)
-            else:
-                self.display_list_view(recipes)
+            # Create and add recipe cards (always use grid view)
+            self.display_grid_view(recipes)
                 
         finally:
             self._refreshing = False
@@ -817,11 +1071,10 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 where_conditions.append("r.is_favorite = 1")
             
             # Category filter
-            if hasattr(self, 'category_selector'):
-                category_id, category_name = self.category_selector.get_selected_category()
-                if category_id != "all":
-                    where_conditions.append("r.category = ?")
-                    params.append(category_name)
+            if hasattr(self, 'category_combo') and self.category_combo.currentData() != 'all':
+                category_id = self.category_combo.currentData()
+                where_conditions.append("r.category = ?")
+                params.append(category_id)
             
             # Build the query
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
@@ -904,7 +1157,7 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 row += 1
     
     def display_list_view(self, recipes):
-        """Display recipes in list view"""
+        """Display recipes in modern list view"""
         # Clear grid properly
         for i in reversed(range(self.cards_grid.count())):
             item = self.cards_grid.itemAt(i)
@@ -912,20 +1165,33 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 item.widget().hide()
                 item.widget().deleteLater()
         
-        # Add recipe cards to list (single column)
-        for i, recipe_data in enumerate(recipes):
-            card = self.create_recipe_card(recipe_data)
-            # Modify card for list view
-            card.setFixedSize(800, 120)
-            card_layout = card.layout()
-            if card_layout:
-                # Make image smaller for list view
-                image_label = card_layout.itemAt(0).widget()
-                if image_label:
-                    image_label.setFixedSize(120, 120)
+        if not recipes:
+            # Show empty state
+            empty_widget = QWidget()
+            empty_layout = QVBoxLayout(empty_widget)
+            empty_layout.setContentsMargins(20, 40, 20, 40)
             
-            self.cards_grid.addWidget(card, i, 0)
-            self.recipe_cards.append(card)
+            empty_label = QLabel("No recipes found. Add some recipes to get started!")
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet("""
+                QLabel {
+                    color: #666;
+                    font-size: 16px;
+                    padding: 20px;
+                    background-color: #f9f9f9;
+                    border: 2px dashed #ddd;
+                    border-radius: 10px;
+                }
+            """)
+            empty_layout.addWidget(empty_label)
+            self.cards_grid.addWidget(empty_widget, 0, 0)
+            return
+        
+        # Add modern list items
+        for i, recipe_data in enumerate(recipes):
+            list_item = self.create_modern_recipe_list_item(recipe_data)
+            self.cards_grid.addWidget(list_item, i, 0)
+            self.recipe_cards.append(list_item)
     
     def _load_sample_recipes(self):
         """Load sample recipes when database is empty"""
@@ -2484,8 +2750,9 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             cursor = db.cursor()
             
             cursor.execute("""
-                SELECT id, title, instructions, prep_time, cook_time, servings, 
-                       '', category, tags, '', '', is_favorite, image_path, difficulty
+                SELECT id, title, source, url, tags, ingredients, instructions, 
+                       rating, prep_time, cook_time, servings, category, 
+                       description, difficulty, is_favorite, image_path
                 FROM recipes 
                 WHERE id = ?
             """, (recipe_id,))
@@ -2512,17 +2779,20 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 recipe_data = {
                     'id': recipe[0],
                     'name': recipe[1],
-                    'instructions': recipe[2] or "",
-                    'prep_time': recipe[3] or "",
-                    'cook_time': recipe[4] or "",
-                    'servings': recipe[5] or 1,
+                    'source': recipe[2] or "",
+                    'url': recipe[3] or "",
+                    'tags': recipe[4] or "",
+                    'ingredients': ingredients,  # Will be loaded from recipe_ingredients table
+                    'instructions': recipe[6] or "",
+                    'rating': recipe[7] or 0.0,
+                    'prep_time': recipe[8] or "",
+                    'cook_time': recipe[9] or "",
+                    'servings': recipe[10] or 1,
+                    'category': recipe[11] or "Uncategorized",
+                    'description': recipe[12] or "",
                     'difficulty': recipe[13] or "Medium",
-                    'category': recipe[7] or "Uncategorized",
-                    'tags': recipe[8] or "",
-                    'ingredients': ingredients,
-                    'notes': "",
-                    'is_favorite': recipe[11] or 0,
-                    'image_path': recipe[12] or ""
+                    'is_favorite': recipe[14] or 0,
+                    'image_path': recipe[15] or ""
                 }
                 
                 db.close()
@@ -2569,8 +2839,16 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             except ImportError:
                 # Fallback implementation when edit dialog is not available
                 self._fallback_edit_recipe_by_id(self.current_recipe_id)
+            except UnicodeEncodeError as e:
+                QMessageBox.critical(self, "Error", 
+                    "Failed to edit recipe: Character encoding error. "
+                    "Please ensure all characters in the recipe can be saved to the database.")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to edit recipe: {str(e)}")
+                try:
+                    error_msg = str(e)
+                    QMessageBox.critical(self, "Error", f"Failed to edit recipe: {error_msg}")
+                except UnicodeEncodeError:
+                    QMessageBox.critical(self, "Error", "Failed to edit recipe: Encoding error occurred.")
     
     def _fallback_edit_recipe_by_id(self, recipe_id):
         """Fallback edit implementation when edit dialog is not available (ID-based)"""
@@ -2580,6 +2858,7 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             if not recipe_data:
                 QMessageBox.warning(self, "Error", "Recipe not found.")
                 return
+            
             
             # Create edit dialog
             dialog = QDialog(self)
@@ -2663,6 +2942,65 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
             instructions_edit.setMaximumHeight(120)
             layout.addWidget(instructions_edit)
             
+            # Image selection
+            image_layout = QVBoxLayout()
+            image_layout.addWidget(QLabel("Recipe Image:"))
+            
+            # Image preview
+            self.image_preview_label = QLabel()
+            self.image_preview_label.setFixedSize(200, 150)
+            self.image_preview_label.setStyleSheet("border: 1px solid #ccc; background-color: #f9f9f9;")
+            self.image_preview_label.setAlignment(Qt.AlignCenter)
+            self.image_preview_label.setText("No image")
+            
+            # Load existing image if available
+            existing_image_path = recipe_data.get('image_path', '')
+            if existing_image_path:
+                try:
+                    from services.image_service import recipe_image_service
+                    pixmap = recipe_image_service.load_image_pixmap(recipe_data.get('id'), (200, 150))
+                    if pixmap and not pixmap.isNull():
+                        self.image_preview_label.setPixmap(pixmap)
+                    else:
+                        self.image_preview_label.setText("Image not found")
+                except Exception as e:
+                    print(f"Error loading image preview: {e}")
+                    self.image_preview_label.setText("Error loading image")
+            
+            image_layout.addWidget(self.image_preview_label)
+            
+            # Image path display and controls
+            image_controls_layout = QHBoxLayout()
+            
+            self.image_path_edit = QLineEdit()
+            self.image_path_edit.setPlaceholderText("No image selected")
+            self.image_path_edit.setText(existing_image_path)
+            self.image_path_edit.setReadOnly(True)
+            image_controls_layout.addWidget(self.image_path_edit)
+            
+            select_image_btn = QPushButton("Select Image")
+            select_image_btn.clicked.connect(lambda: self.select_recipe_image())
+            image_controls_layout.addWidget(select_image_btn)
+            
+            clear_image_btn = QPushButton("Clear")
+            clear_image_btn.clicked.connect(lambda: self.clear_recipe_image())
+            image_controls_layout.addWidget(clear_image_btn)
+            
+            image_layout.addLayout(image_controls_layout)
+            layout.addLayout(image_layout)
+            
+            # Source
+            layout.addWidget(QLabel("Source:"))
+            source_edit = QLineEdit(recipe_data.get('source', ''))
+            source_edit.setPlaceholderText("e.g., 'AllRecipes', 'Food Network', or leave empty")
+            layout.addWidget(source_edit)
+            
+            # URL
+            layout.addWidget(QLabel("URL:"))
+            url_edit = QLineEdit(recipe_data.get('url', ''))
+            url_edit.setPlaceholderText("https://example.com/recipe (optional)")
+            layout.addWidget(url_edit)
+            
             # Notes
             layout.addWidget(QLabel("Notes:"))
             notes_edit = QTextEdit()
@@ -2692,6 +3030,9 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                     'servings': servings_spin.value(),
                     'difficulty': difficulty_combo.currentText(),
                     'description': desc_edit.toPlainText().strip(),
+                    'image_path': self.image_path_edit.text().strip(),
+                    'source': source_edit.text().strip(),
+                    'url': url_edit.text().strip(),
                     'ingredients': self._parse_ingredients_from_text(ingredients_edit.toPlainText()),
                     'instructions': instructions_edit.toPlainText().strip(),
                     'notes': notes_edit.toPlainText().strip()
@@ -2712,39 +3053,477 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 else:
                     QMessageBox.warning(self, "Error", "Failed to update recipe in database.")
                 
+        except UnicodeEncodeError as e:
+            QMessageBox.critical(self, "Error", 
+                "Failed to edit recipe: Character encoding error. "
+                "Please ensure all characters in the recipe can be saved to the database.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to edit recipe: {str(e)}")
+            try:
+                error_msg = str(e)
+                QMessageBox.critical(self, "Error", f"Failed to edit recipe: {error_msg}")
+            except UnicodeEncodeError:
+                QMessageBox.critical(self, "Error", "Failed to edit recipe: Encoding error occurred.")
+    
+    def select_recipe_image(self):
+        """Select and optionally crop a recipe image"""
+        try:
+            from services.image_service import recipe_image_service
+            
+            # Select image file
+            image_path = recipe_image_service.select_image(self)
+            if image_path:
+                # The image service will handle cropping automatically if needed
+                self.image_path_edit.setText(image_path)
+                
+                # Update preview
+                if hasattr(self, 'image_preview_label'):
+                    try:
+                        pixmap = QPixmap(image_path)
+                        if not pixmap.isNull():
+                            scaled_pixmap = pixmap.scaled(200, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                            self.image_preview_label.setPixmap(scaled_pixmap)
+                        else:
+                            self.image_preview_label.setText("Invalid image")
+                    except Exception as e:
+                        print(f"Error updating preview: {e}")
+                        self.image_preview_label.setText("Error loading image")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to select image: {str(e)}")
+    
+    def clear_recipe_image(self):
+        """Clear the selected recipe image"""
+        self.image_path_edit.setText('')
+        if hasattr(self, 'image_preview_label'):
+            self.image_preview_label.clear()
+            self.image_preview_label.setText("No image")
+    
+    def cleanup_temp_files(self):
+        """Clean up temporary files created during image processing"""
+        try:
+            from services.image_service import recipe_image_service
+            recipe_image_service.cleanup_temp_files()
+        except Exception as e:
+            print(f"Error cleaning up temp files: {e}")
+    
+    def convert_all_images_to_webp(self):
+        """Convert all existing recipe images to WebP format"""
+        try:
+            from services.image_service import recipe_image_service
+            
+            # Get all recipes with images
+            from utils.db import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id FROM recipes WHERE image_path IS NOT NULL AND image_path != ''")
+            recipe_ids = cursor.fetchall()
+            conn.close()
+            
+            converted_count = 0
+            for (recipe_id,) in recipe_ids:
+                try:
+                    webp_path = recipe_image_service.convert_to_webp(recipe_id)
+                    if webp_path:
+                        converted_count += 1
+                        print(f"Converted recipe {recipe_id} image to WebP")
+                except Exception as e:
+                    print(f"Error converting recipe {recipe_id} image: {e}")
+            
+            QMessageBox.information(self, "Conversion Complete", 
+                                  f"Successfully converted {converted_count} images to WebP format!")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to convert images: {str(e)}")
+    
+    def _get_recipe_source_info(self, recipe_data):
+        """Get formatted source information for display"""
+        source = recipe_data.get('source', '')
+        url = recipe_data.get('url', '')
+        
+        if url:
+            if source:
+                return f"Source: {source}\nURL: {url}"
+            else:
+                return f"Source URL: {url}"
+        elif source:
+            return f"Source: {source}"
+        
+        return None
+    
+    def _open_url_in_browser(self, url):
+        """Open URL in default web browser"""
+        try:
+            QDesktopServices.openUrl(QUrl(url))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to open URL: {str(e)}")
+    
+    def _send_to_menu(self, recipe_data):
+        """Send recipe to menu planner"""
+        try:
+            # Get menu panel reference
+            menu_panel = self.app.get_panel('menu') if hasattr(self, 'app') and self.app else None
+            if menu_panel and hasattr(menu_panel, 'add_recipe_to_menu'):
+                menu_panel.add_recipe_to_menu(recipe_data)
+                QMessageBox.information(self, "Success", f"Recipe '{recipe_data.get('name', 'Unknown')}' added to menu planner!")
+            else:
+                QMessageBox.information(self, "Info", "Menu planner functionality not available.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to add recipe to menu: {str(e)}")
+    
+    def _send_to_shopping_list(self, recipe_data):
+        """Send recipe ingredients to shopping list"""
+        try:
+            # Get shopping list panel reference
+            shopping_panel = self.app.get_panel('shopping') if hasattr(self, 'app') and self.app else None
+            if shopping_panel and hasattr(shopping_panel, 'add_recipe_ingredients'):
+                shopping_panel.add_recipe_ingredients(recipe_data)
+                QMessageBox.information(self, "Success", f"Ingredients from '{recipe_data.get('name', 'Unknown')}' added to shopping list!")
+            else:
+                QMessageBox.information(self, "Info", "Shopping list functionality not available.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to add ingredients to shopping list: {str(e)}")
+    
+    def _scale_recipe_from_view(self, parent_dialog, recipe_data):
+        """Scale recipe from view dialog"""
+        try:
+            # Extract ingredients from recipe data
+            ingredients_text = recipe_data.get('ingredients', '')
+            if isinstance(ingredients_text, str):
+                ingredients = self._parse_ingredients_from_text(ingredients_text)
+            else:
+                ingredients = ingredients_text or []
+            
+            if not ingredients:
+                QMessageBox.warning(self, "No Ingredients", "This recipe has no ingredients to scale.")
+                return
+            
+            # Show scaling dialog
+            from utils.recipe_scaling_dialog import RecipeScalingDialog
+            
+            dialog = RecipeScalingDialog(ingredients, self)
+            if dialog.exec() == QDialog.Accepted:
+                scaled_ingredients = dialog.get_scaled_ingredients()
+                
+                # Update recipe data with scaled ingredients
+                recipe_data['ingredients'] = scaled_ingredients
+                
+                # Update in database
+                recipe_id = recipe_data.get('id')
+                if recipe_id and self._update_recipe_in_database(recipe_id, recipe_data):
+                    QMessageBox.information(self, "Success", "Recipe scaled successfully!")
+                    parent_dialog.close()  # Close view dialog
+                    self.refresh_recipe_display()  # Refresh the recipe list
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to update scaled recipe.")
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to scale recipe: {str(e)}")
+    
+    def _show_recipe_context_menu(self, parent_dialog, recipe_data):
+        """Show right-click context menu for recipe"""
+        from PySide6.QtWidgets import QMenu
+        
+        menu = QMenu(parent_dialog)
+        
+        # Edit Recipe
+        edit_action = menu.addAction("✏️ Edit Recipe")
+        edit_action.triggered.connect(lambda: self._edit_recipe_from_view(parent_dialog, recipe_data))
+        
+        # Export Recipe
+        export_action = menu.addAction("📤 Export Recipe")
+        export_submenu = QMenu("Export Format", menu)
+        export_submenu.addAction("Export as Text").triggered.connect(lambda: self._export_recipe_txt_from_view(recipe_data))
+        export_submenu.addAction("Export as HTML").triggered.connect(lambda: self._export_recipe_html_from_view(recipe_data))
+        export_action.setMenu(export_submenu)
+        menu.addAction(export_action)
+        
+        menu.addSeparator()
+        
+        # Delete Recipe
+        delete_action = menu.addAction("🗑️ Delete Recipe")
+        delete_action.triggered.connect(lambda: self._delete_recipe_from_view(parent_dialog, recipe_data))
+        
+        # Show menu at cursor position
+        menu.exec(parent_dialog.mapToGlobal(parent_dialog.cursor().pos()))
+    
+    def _edit_recipe_from_view(self, parent_dialog, recipe_data):
+        """Edit recipe from view dialog"""
+        parent_dialog.close()
+        self.current_recipe_id = recipe_data.get('id')
+        self.edit_recipe()
+    
+    def _export_recipe_txt_from_view(self, recipe_data):
+        """Export recipe as text from view dialog"""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export Recipe as Text", 
+                f"{recipe_data.get('name', 'recipe')}.txt", 
+                "Text Files (*.txt)"
+            )
+            
+            if file_path:
+                self._write_recipe_to_txt_file(recipe_data, file_path)
+                QMessageBox.information(self, "Success", f"Recipe exported to {file_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export recipe: {str(e)}")
+    
+    def _export_recipe_html_from_view(self, recipe_data):
+        """Export recipe as HTML from view dialog"""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export Recipe as HTML", 
+                f"{recipe_data.get('name', 'recipe')}.html", 
+                "HTML Files (*.html)"
+            )
+            
+            if file_path:
+                self._write_recipe_to_html_file(recipe_data, file_path)
+                QMessageBox.information(self, "Success", f"Recipe exported to {file_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export recipe: {str(e)}")
+    
+    def _delete_recipe_from_view(self, parent_dialog, recipe_data):
+        """Delete recipe from view dialog"""
+        reply = QMessageBox.question(
+            parent_dialog, "Delete Recipe", 
+            f"Are you sure you want to delete '{recipe_data.get('name', 'Unknown Recipe')}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            parent_dialog.close()
+            self.current_recipe_id = recipe_data.get('id')
+            self.delete_recipe()
+    
+    def _write_recipe_to_txt_file(self, recipe_data, file_path):
+        """Write recipe to text file"""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(f"Recipe: {recipe_data.get('name', 'Unknown')}\n")
+            f.write("=" * 50 + "\n\n")
+            
+            # Basic info
+            f.write(f"Category: {recipe_data.get('category', 'N/A')}\n")
+            f.write(f"Prep Time: {recipe_data.get('prep_time', 'N/A')}\n")
+            f.write(f"Cook Time: {recipe_data.get('cook_time', 'N/A')}\n")
+            f.write(f"Servings: {recipe_data.get('servings', 'N/A')}\n")
+            f.write(f"Difficulty: {recipe_data.get('difficulty', 'N/A')}\n\n")
+            
+            # Description
+            if recipe_data.get('description'):
+                f.write(f"Description: {recipe_data['description']}\n\n")
+            
+            # Source
+            source_info = self._get_recipe_source_info(recipe_data)
+            if source_info:
+                f.write(f"{source_info}\n\n")
+            
+            # Ingredients
+            f.write("INGREDIENTS:\n")
+            f.write("-" * 20 + "\n")
+            ingredients = recipe_data.get('ingredients', [])
+            if isinstance(ingredients, list):
+                for ingredient in ingredients:
+                    if isinstance(ingredient, dict):
+                        amount = ingredient.get('amount', '')
+                        unit = ingredient.get('unit', '')
+                        name = ingredient.get('name', '')
+                        f.write(f"• {amount} {unit} {name}\n".strip() + "\n")
+                    else:
+                        f.write(f"• {ingredient}\n")
+            else:
+                f.write(f"{ingredients}\n")
+            
+            f.write("\n")
+            
+            # Instructions
+            f.write("INSTRUCTIONS:\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"{recipe_data.get('instructions', 'No instructions available')}\n")
+    
+    def _write_recipe_to_html_file(self, recipe_data, file_path):
+        """Write recipe to HTML file"""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write("<!DOCTYPE html>\n<html>\n<head>\n")
+            f.write("<meta charset='utf-8'>\n")
+            f.write(f"<title>{recipe_data.get('name', 'Recipe')}</title>\n")
+            f.write("<style>body{font-family:Arial,sans-serif;margin:40px;line-height:1.6;}</style>\n")
+            f.write("</head>\n<body>\n")
+            
+            f.write(f"<h1>{recipe_data.get('name', 'Unknown Recipe')}</h1>\n")
+            
+            # Basic info
+            f.write("<div style='background:#f5f5f5;padding:15px;margin:20px 0;border-radius:5px;'>\n")
+            f.write(f"<strong>Category:</strong> {recipe_data.get('category', 'N/A')}<br>\n")
+            f.write(f"<strong>Prep Time:</strong> {recipe_data.get('prep_time', 'N/A')}<br>\n")
+            f.write(f"<strong>Cook Time:</strong> {recipe_data.get('cook_time', 'N/A')}<br>\n")
+            f.write(f"<strong>Servings:</strong> {recipe_data.get('servings', 'N/A')}<br>\n")
+            f.write(f"<strong>Difficulty:</strong> {recipe_data.get('difficulty', 'N/A')}\n")
+            f.write("</div>\n")
+            
+            # Description
+            if recipe_data.get('description'):
+                f.write(f"<p><strong>Description:</strong> {recipe_data['description']}</p>\n")
+            
+            # Source
+            source_info = self._get_recipe_source_info(recipe_data)
+            if source_info:
+                # Make URLs clickable
+                if 'URL:' in source_info:
+                    url = source_info.split('URL: ')[1].strip()
+                    source_info = source_info.replace(url, f'<a href="{url}" target="_blank">{url}</a>')
+                f.write(f"<p style='color:#666;font-style:italic;'>{source_info}</p>\n")
+            
+            # Ingredients
+            f.write("<h2>Ingredients</h2>\n<ul>\n")
+            ingredients = recipe_data.get('ingredients', [])
+            if isinstance(ingredients, list):
+                for ingredient in ingredients:
+                    if isinstance(ingredient, dict):
+                        amount = ingredient.get('amount', '')
+                        unit = ingredient.get('unit', '')
+                        name = ingredient.get('name', '')
+                        f.write(f"<li>{amount} {unit} {name}</li>\n".strip())
+                    else:
+                        f.write(f"<li>{ingredient}</li>\n")
+            else:
+                f.write(f"<li>{ingredients}</li>\n")
+            f.write("</ul>\n")
+            
+            # Instructions
+            f.write("<h2>Instructions</h2>\n")
+            instructions = recipe_data.get('instructions', 'No instructions available')
+            # Convert line breaks to HTML
+            instructions = instructions.replace('\n', '<br>\n')
+            f.write(f"<div style='white-space:pre-line;'>{instructions}</div>\n")
+            
+            f.write("</body>\n</html>\n")
     
     def _parse_ingredients_from_text(self, ingredients_text):
-        """Parse ingredients from text input"""
+        """Parse ingredients from text input using enhanced parsing"""
         ingredients = []
         for line in ingredients_text.split('\n'):
             line = line.strip()
             if line:
-                # Try to parse quantity, unit, and name
-                parts = line.split(' ', 2)
-                if len(parts) >= 3:
-                    # Has quantity, unit, and name
-                    ingredients.append({
-                        'name': parts[2],
-                        'amount': parts[0],
-                        'unit': parts[1]
-                    })
-                elif len(parts) == 2:
-                    # Has quantity and name (no unit)
-                    ingredients.append({
-                        'name': parts[1],
-                        'amount': parts[0],
-                        'unit': ''
-                    })
+                # Use enhanced parsing similar to recipe scraper
+                parsed = self._parse_ingredient_line(line)
+                if parsed:
+                    ingredients.append(parsed)
                 else:
-                    # Just name
+                    # Fallback: just name
                     ingredients.append({
                         'name': line,
                         'amount': '',
                         'unit': ''
                     })
         return ingredients
+    
+    def _parse_ingredient_line(self, text):
+        """Parse a single ingredient line with enhanced logic"""
+        import re
+        
+        # Remove common prefixes
+        text = re.sub(r'^[•\-\*\d+\.\)]\s*', '', text)
+        text = text.strip()
+        
+        if not text:
+            return None
+        
+        # Convert Unicode fractions to ASCII equivalents
+        unicode_fractions = {
+            '½': '1/2',
+            '¼': '1/4', 
+            '¾': '3/4',
+            '⅓': '1/3',
+            '⅔': '2/3',
+            '⅛': '1/8',
+            '⅜': '3/8',
+            '⅝': '5/8',
+            '⅞': '7/8'
+        }
+        
+        # Replace Unicode fractions with ASCII equivalents
+        for unicode_char, ascii_equiv in unicode_fractions.items():
+            text = text.replace(unicode_char, ascii_equiv)
+        
+        # Comprehensive list of measurement units and their variations
+        units = [
+            # Volume
+            'cup', 'cups', 'c', 'c.',
+            'tablespoon', 'tablespoons', 'tbsp', 'tbsp.', 'tbs', 'tbs.',
+            'teaspoon', 'teaspoons', 'tsp', 'tsp.', 'ts', 'ts.',
+            'fluid ounce', 'fluid ounces', 'fl oz', 'fl. oz.', 'floz',
+            'pint', 'pints', 'pt', 'pt.',
+            'quart', 'quarts', 'qt', 'qt.',
+            'gallon', 'gallons', 'gal', 'gal.',
+            'liter', 'liters', 'l', 'l.',
+            'milliliter', 'milliliters', 'ml', 'ml.',
+            
+            # Weight
+            'pound', 'pounds', 'lb', 'lb.', 'lbs', 'lbs.',
+            'ounce', 'ounces', 'oz', 'oz.',
+            'gram', 'grams', 'g', 'g.',
+            'kilogram', 'kilograms', 'kg', 'kg.',
+            
+            # Count/Size
+            'piece', 'pieces', 'pc', 'pc.',
+            'slice', 'slices',
+            'clove', 'cloves',
+            'head', 'heads',
+            'bunch', 'bunches',
+            'can', 'cans',
+            'package', 'packages', 'pkg', 'pkg.',
+            'bag', 'bags',
+            'bottle', 'bottles',
+            'jar', 'jars',
+            'box', 'boxes',
+            
+            # Size descriptors
+            'large', 'medium', 'small', 'extra large', 'xl',
+            'whole', 'half', 'quarter',
+            'diced', 'chopped', 'sliced', 'minced', 'grated',
+            'fresh', 'dried', 'frozen', 'canned'
+        ]
+        
+        # Create regex pattern for units (case insensitive)
+        units_pattern = r'\b(' + '|'.join(re.escape(unit) for unit in units) + r')\b'
+        
+        # Pattern for amounts: handles integers, decimals, fractions, and mixed numbers
+        amount_pattern = r'(\d+(?:\.\d+)?(?:\s+\d+\/\d+|\/\d+)?)'
+        
+        # Full pattern: amount + optional unit + ingredient name
+        full_pattern = rf'^{amount_pattern}\s+({units_pattern}\s+)?(.+)$'
+        
+        match = re.match(full_pattern, text, re.IGNORECASE)
+        if match:
+            amount = match.group(1).strip()
+            unit = match.group(2).strip() if match.group(2) else ''
+            ingredient_name = match.group(3).strip()
+            
+            return {
+                'name': ingredient_name,
+                'amount': amount,
+                'unit': unit
+            }
+        
+        # Try pattern without unit: "2 eggs", "1 onion"
+        simple_pattern = rf'^{amount_pattern}\s+(.+)$'
+        match = re.match(simple_pattern, text)
+        if match:
+            amount = match.group(1).strip()
+            ingredient_name = match.group(2).strip()
+            
+            return {
+                'name': ingredient_name,
+                'amount': amount,
+                'unit': ''
+            }
+        
+        return None
     
     def delete_recipe(self):
         """Delete selected recipe"""
@@ -2783,9 +3562,33 @@ class CookbookPanel(CookbookContextMenuMixin, BasePanel):
                 dialog = QDialog(self)
                 dialog.setWindowTitle(f"View Recipe: {recipe_name}")
                 dialog.setModal(True)
-                dialog.resize(800, 600)
+                dialog.resize(900, 700)
                 
                 layout = QVBoxLayout(dialog)
+                
+                # Add action buttons at the top
+                action_layout = QHBoxLayout()
+                
+                send_to_menu_btn = QPushButton("📋 Send to Menu")
+                send_to_menu_btn.clicked.connect(lambda: self._send_to_menu(recipe_data))
+                action_layout.addWidget(send_to_menu_btn)
+                
+                send_to_shopping_btn = QPushButton("🛒 Send to Shopping List")
+                send_to_shopping_btn.clicked.connect(lambda: self._send_to_shopping_list(recipe_data))
+                action_layout.addWidget(send_to_shopping_btn)
+                
+
+                
+
+                
+                action_layout.addStretch()
+                
+                # Right-click menu button
+                more_btn = QPushButton("⋮ More Options")
+                more_btn.clicked.connect(lambda: self._show_recipe_context_menu(dialog, recipe_data))
+                action_layout.addWidget(more_btn)
+                
+                layout.addLayout(action_layout)
                 
                 # Top section with recipe info and scaling
                 top_layout = QHBoxLayout()
@@ -2837,6 +3640,23 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                     desc_label = QLabel(f"Description: {recipe_data['description']}")
                     desc_label.setWordWrap(True)
                     info_layout.addWidget(desc_label)
+                
+                # Source information
+                source_info = self._get_recipe_source_info(recipe_data)
+                if source_info:
+                    source_label = QLabel(source_info)
+                    source_label.setWordWrap(True)
+                    source_label.setStyleSheet("color: #666; font-style: italic; margin-top: 10px;")
+                    
+                    # Make URL clickable if present
+                    url = recipe_data.get('url', '')
+                    if url and url.startswith(('http://', 'https://')):
+                        source_label.setStyleSheet("color: #0066cc; font-style: italic; margin-top: 10px; text-decoration: underline;")
+                        source_label.setCursor(Qt.PointingHandCursor)
+                        source_label.mousePressEvent = lambda event: self._open_url_in_browser(url)
+                        source_label.setToolTip(f"Click to open: {url}")
+                    
+                    info_layout.addWidget(source_label)
                 
                 info_layout.addStretch()
                 top_layout.addWidget(info_widget)
@@ -2926,6 +3746,10 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                 scroll_area.setWidget(scroll_widget)
                 scroll_area.setWidgetResizable(True)
                 layout.addWidget(scroll_area)
+                
+                # Enable right-click context menu on the dialog
+                dialog.setContextMenuPolicy(Qt.CustomContextMenu)
+                dialog.customContextMenuRequested.connect(lambda pos: self._show_view_recipe_context_menu(dialog, recipe_data, pos))
                 
                 # Buttons
                 button_layout = QHBoxLayout()
@@ -3030,6 +3854,159 @@ Difficulty: {scaled_recipe.get('difficulty', 'N/A')}
             ingredients_text = "No ingredients specified"
         
         self.ingredients_display.setText(ingredients_text.strip())
+    
+
+    
+    def _show_gf_analysis_dialog(self, parent_dialog, recipe_data, analysis):
+        """Show gluten-free analysis and conversion dialog"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton, QMessageBox, QGroupBox
+        
+        dialog = QDialog(parent_dialog)
+        dialog.setWindowTitle("Gluten-Free Recipe Analysis")
+        dialog.setModal(True)
+        dialog.resize(700, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Header
+        header_label = QLabel(f"Gluten-Free Analysis: {recipe_data.get('name', 'Recipe')}")
+        header_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(header_label)
+        
+        # Summary
+        summary_group = QGroupBox("Analysis Summary")    
+        summary_layout = QVBoxLayout(summary_group)
+        
+        gluten_count = len(analysis['gluten_ingredients'])
+        summary_text = f"""
+Found {gluten_count} gluten-containing ingredients
+Conversion Difficulty: {analysis['difficulty_level']}
+Estimated Cost Change: {analysis['estimated_cost_change']}
+        """
+        summary_label = QLabel(summary_text.strip())
+        summary_layout.addWidget(summary_label)
+        layout.addWidget(summary_group)
+        
+        # Gluten ingredients found
+        if analysis['gluten_ingredients']:
+            gluten_group = QGroupBox("Gluten Ingredients Found")
+            gluten_layout = QVBoxLayout(gluten_group)
+            
+            gluten_text = ""
+            for item in analysis['gluten_ingredients']:
+                gluten_text += f"• {item['amount']} {item['original']} → {item['replacement']}\n"
+            
+            gluten_label = QLabel(gluten_text.strip())
+            gluten_label.setWordWrap(True)
+            gluten_layout.addWidget(gluten_label)
+            layout.addWidget(gluten_group)
+        
+        # Conversion notes
+        if analysis['conversion_notes']:
+            notes_group = QGroupBox("Conversion Notes")
+            notes_layout = QVBoxLayout(notes_group)
+            
+            notes_text = "\n".join(f"• {note}" for note in analysis['conversion_notes'])
+            notes_label = QLabel(notes_text)
+            notes_label.setWordWrap(True)
+            notes_layout.addWidget(notes_label)
+            layout.addWidget(notes_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        convert_btn = QPushButton("Convert to Gluten-Free Recipe")
+        convert_btn.clicked.connect(lambda: self._convert_to_gf_recipe(dialog, recipe_data))
+        button_layout.addWidget(convert_btn)
+        
+        cancel_btn = QPushButton("Close")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+        
+        dialog.exec()
+
+    def get_recipe_nutrition(self, recipe_data):
+        """Placeholder function for fetching USDA nutrition information"""
+        pass
+    
+    def _convert_to_gf_recipe(self, analysis_dialog, recipe_data):
+        """Convert recipe to gluten-free and save as new recipe"""
+        try:
+            from services.gluten_free_converter import gluten_free_converter
+            
+            # Convert the recipe
+            converted_recipe = gluten_free_converter.convert_recipe(recipe_data)
+            
+            # Show edit dialog for the converted recipe
+            from utils.edit_dialogs import RecipeEditDialog
+            
+            edit_dialog = RecipeEditDialog(self)
+            edit_dialog.set_data(converted_recipe)
+            
+            if edit_dialog.exec() == QDialog.Accepted:
+                new_data = edit_dialog.get_data()
+                
+                # Save to database
+                recipe_id = self._save_recipe_to_database(new_data)
+                if recipe_id:
+                    new_data['id'] = recipe_id
+                    self.recipe_data_storage[recipe_id] = new_data
+                    self.refresh_recipe_display()
+                    
+                    QMessageBox.information(self, "Success", 
+                        f"Gluten-free recipe '{new_data['name']}' saved successfully!")
+                    analysis_dialog.accept()
+                else:
+                    QMessageBox.warning(self, "Error", "Failed to save gluten-free recipe.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to convert recipe: {str(e)}")
+    
+    def _show_view_recipe_context_menu(self, dialog, recipe_data, position):
+        """Show right-click context menu for view recipe dialog"""
+        from PySide6.QtWidgets import QMenu
+        
+        menu = QMenu(dialog)
+        
+        # Add all view recipe actions
+        edit_action = menu.addAction("✏️ Edit Recipe")
+        edit_action.triggered.connect(lambda: self._edit_recipe_by_id(dialog, recipe_data.get('id')))
+        
+        menu.addSeparator()
+        
+        send_menu_action = menu.addAction("📋 Send to Menu")
+        send_menu_action.triggered.connect(lambda: self._send_to_menu(recipe_data))
+        
+        send_shopping_action = menu.addAction("🛒 Send to Shopping List")
+        send_shopping_action.triggered.connect(lambda: self._send_to_shopping_list(recipe_data))
+        
+        scale_action = menu.addAction("⚖️ Scale Recipe")
+        scale_action.triggered.connect(lambda: self._scale_recipe_from_view(dialog, recipe_data))
+        
+        menu.addSeparator()
+        
+        export_txt_action = menu.addAction("📄 Export as Text")
+        export_txt_action.triggered.connect(lambda: self._export_recipe_txt_from_view(recipe_data))
+        
+        export_html_action = menu.addAction("🌐 Export as HTML")
+        export_html_action.triggered.connect(lambda: self._export_recipe_html_from_view(recipe_data))
+        
+        print_action = menu.addAction("🖨️ Print Recipe")
+        print_action.triggered.connect(lambda: self._print_recipe(dialog, recipe_data))
+        
+        menu.addSeparator()
+        
+        favorite_action = menu.addAction("⭐ Toggle Favorite")
+        favorite_action.triggered.connect(lambda: self._toggle_favorite(recipe_data.get('id')))
+        
+        delete_action = menu.addAction("🗑️ Delete Recipe")
+        delete_action.triggered.connect(lambda: self._delete_recipe_from_view(dialog, recipe_data))
+        
+        # Show menu at cursor position
+        global_pos = dialog.mapToGlobal(position)
+        menu.exec(global_pos)
     
     def _export_recipe(self, dialog, recipe_data, format_type):
         """Export recipe to file and open it automatically"""
@@ -3225,34 +4202,26 @@ Difficulty: {scaled_recipe.get('difficulty', 'N/A')}
             conn = get_connection()
             cursor = conn.cursor()
             
-            # Get all categories ordered by parent_id, then sort_order
+            # Get unique categories from actual recipes (not the categories table)
             cursor.execute("""
-                SELECT id, name, parent_id, icon, color 
-                FROM categories 
-                ORDER BY 
-                    CASE WHEN parent_id IS NULL THEN 0 ELSE 1 END,
-                    parent_id,
-                    sort_order,
-                    name
+                SELECT DISTINCT category 
+                FROM recipes 
+                WHERE category IS NOT NULL AND category != ''
+                ORDER BY category
             """)
-            categories = cursor.fetchall()
+            recipe_categories = cursor.fetchall()
             conn.close()
             
-            # Clear existing items (keep "All Categories")
-            self.category_filter_combo.clear()
-            self.category_filter_combo.addItem("All Categories")
-            
-            # Add categories with proper indentation for subcategories
-            for cat_id, name, parent_id, icon, color in categories:
-                if parent_id is None:
-                    # Primary category
-                    display_text = f"{icon} {name}"
-                    self.category_filter_combo.addItem(display_text, cat_id)
-                else:
-                    # Subcategory - find parent name for indentation
-                    parent_name = self._get_category_name(parent_id)
-                    display_text = f"  └ {icon} {name}"
-                    self.category_filter_combo.addItem(display_text, cat_id)
+            # Clear existing items and populate combo box
+            if hasattr(self, 'category_combo'):
+                self.category_combo.clear()
+                self.category_combo.addItem("All Categories", "all")
+                
+                for (category_name,) in recipe_categories:
+                    self.category_combo.addItem(category_name, category_name)
+                
+                # Set default selection to "All Categories"
+                self.category_combo.setCurrentIndex(0)
             
         except Exception as e:
             print(f"Error loading categories: {e}")
@@ -3750,7 +4719,7 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
             {self._extract_content_sections(content_html)}
         </div>
         <div class="recipe-footer">
-            <p>Generated by Celiogix Recipe Manager</p>
+            <p>Generated by CeliacShield Recipe Manager</p>
         </div>
     </div>
 </body>
@@ -3840,7 +4809,7 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                 recipe = scrape_recipe_from_url(url)
                 if recipe and recipe.get('name'):
                     progress.setLabelText("Adding recipe to cookbook...")
-                    self._add_scraped_recipe(recipe)
+                    self._add_scraped_recipe(recipe, source_url=url)
                     progress.close()
                     QMessageBox.information(self, "Import Success", 
                                           f"Successfully imported recipe: {recipe.get('name', 'Unknown')}")
@@ -3857,7 +4826,7 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                             progress.setValue(i)
                             progress.setLabelText(f"Importing recipe {i+1} of {len(recipes)}...")
                             if recipe and recipe.get('name'):
-                                self._add_scraped_recipe(recipe)
+                                self._add_scraped_recipe(recipe, source_url=url)
                                 imported_count += 1
                         
                         progress.close()
@@ -3906,9 +4875,28 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                 if reply == QMessageBox.Yes:
                     self._fallback_web_import(url)
     
-    def _add_scraped_recipe(self, recipe):
+    def _add_scraped_recipe(self, recipe, source_url=None):
         """Add a scraped recipe to the table and database"""
         try:
+            # Add source URL if provided
+            if source_url:
+                recipe['url'] = source_url
+                if not recipe.get('source'):
+                    # Extract domain name as source
+                    from urllib.parse import urlparse
+                    try:
+                        domain = urlparse(source_url).netloc
+                        recipe['source'] = domain.replace('www.', '')
+                    except:
+                        recipe['source'] = 'Web Import'
+            
+            # Try to download and add recipe image if available
+            if recipe.get('image_url'):
+                try:
+                    self._download_recipe_image(recipe)
+                except Exception as e:
+                    print(f"Failed to download recipe image: {e}")
+            
             # Save to database first
             recipe_id = self._save_recipe_to_database(recipe)
             if recipe_id:
@@ -3921,6 +4909,45 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
                 QMessageBox.warning(self, "Database Error", "Failed to save recipe to database.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add scraped recipe: {str(e)}")
+    
+    def _download_recipe_image(self, recipe):
+        """Download and process recipe image from URL"""
+        try:
+            import requests
+            from services.image_service import recipe_image_service
+            
+            image_url = recipe.get('image_url')
+            if not image_url:
+                return
+            
+            # Download image
+            response = requests.get(image_url, timeout=30)
+            response.raise_for_status()
+            
+            # Save temporarily
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_file:
+                temp_file.write(response.content)
+                temp_path = temp_file.name
+            
+            # Process and save using image service
+            recipe_id = recipe.get('id')
+            if recipe_id:
+                processed_path = recipe_image_service.process_and_save_image(
+                    temp_path, recipe_id, enable_crop=True
+                )
+                if processed_path:
+                    recipe['image_path'] = processed_path
+            
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"Error downloading recipe image: {e}")
     
     def bulk_import_recipes(self):
         """Bulk import recipes from files"""
@@ -4218,129 +5245,66 @@ Difficulty: {recipe_data.get('difficulty', 'N/A')}
             QMessageBox.critical(self, "Export Error", f"Failed to export recipes: {str(e)}")
     
     def scale_recipe(self):
-        """Scale selected recipe to different serving size"""
-        current_row = self.recipes_table.currentRow()
-        if current_row >= 0:
-            try:
-                from services.recipe_enhancement import recipe_scaler
-                
-                # Get current recipe data
-                recipe_data = {
-                    'title': self.recipes_table.item(current_row, 0).text(),
-                    'servings': 4,  # Default
-                    'ingredients': [
-                        {'name': 'Sample ingredient', 'quantity': 1, 'unit': 'cup', 'notes': ''}
-                    ]
-                }
-                
-                # Show scaling dialog
-                dialog = QDialog(self)
-                dialog.setWindowTitle("Scale Recipe")
-                dialog.setModal(True)
-                dialog.resize(300, 150)
-                
-                layout = QVBoxLayout(dialog)
-                layout.addWidget(QLabel("Scale recipe to how many servings?"))
-                
-                servings_spin = QSpinBox()
-                servings_spin.setMinimum(1)
-                servings_spin.setMaximum(50)
-                servings_spin.setValue(4)
-                layout.addWidget(servings_spin)
-                
-                button_layout = QHBoxLayout()
-                scale_btn = QPushButton("Scale Recipe")
-                cancel_btn = QPushButton("Cancel")
-                
-                scale_btn.clicked.connect(dialog.accept)
-                cancel_btn.clicked.connect(dialog.reject)
-                
-                button_layout.addWidget(scale_btn)
-                button_layout.addWidget(cancel_btn)
-                layout.addLayout(button_layout)
-                
-                if dialog.exec() == QDialog.Accepted:
-                    target_servings = servings_spin.value()
-                    scaled_recipe = recipe_scaler.scale_recipe(recipe_data, target_servings)
-                    
-                    QMessageBox.information(
-                        self, "Recipe Scaled", 
-                        f"Recipe scaled to {target_servings} servings!\n\nScale factor: {scaled_recipe.get('scale_factor', 1):.2f}x"
-                    )
-                    
-            except ImportError:
-                QMessageBox.information(self, "Scale Recipe", "Recipe scaling functionality will be implemented here.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to scale recipe: {str(e)}")
+        """Scale recipe ingredients with comprehensive conversion support"""
+        if not hasattr(self, 'current_recipe_id') or not self.current_recipe_id:
+            QMessageBox.warning(self, "No Recipe Selected", "Please select a recipe to scale.")
+            return
+        
+        # Get recipe data
+        recipe_data = self._get_recipe_data_by_id(self.current_recipe_id)
+        if not recipe_data:
+            QMessageBox.warning(self, "Error", "Could not load recipe data.")
+            return
+        
+        # Show scaling dialog
+        from utils.recipe_scaling_dialog import RecipeScalingDialog
+        
+        # Extract ingredients from recipe data
+        ingredients_text = recipe_data.get('ingredients', '')
+        if isinstance(ingredients_text, str):
+            ingredients = self._parse_ingredients_from_text(ingredients_text)
+        else:
+            ingredients = ingredients_text or []
+        
+        if not ingredients:
+            QMessageBox.warning(self, "No Ingredients", "This recipe has no ingredients to scale.")
+            return
+        
+        dialog = RecipeScalingDialog(ingredients, self)
+        if dialog.exec() == QDialog.Accepted:
+            scaled_ingredients = dialog.get_scaled_ingredients()
+            
+            # Update recipe data with scaled ingredients
+            recipe_data['ingredients'] = scaled_ingredients
+            
+            # Update in database
+            if self._update_recipe_in_database(self.current_recipe_id, recipe_data):
+                QMessageBox.information(self, "Success", "Recipe scaled successfully!")
+                self.refresh_recipe_display()
+            else:
+                QMessageBox.warning(self, "Error", "Failed to update scaled recipe.")
     
-    def convert_to_gluten_free(self):
-        """Convert selected recipe to gluten-free"""
-        current_row = self.recipes_table.currentRow()
-        if current_row >= 0:
-            try:
-                from services.recipe_enhancement import recipe_converter
-                
-                # Get current recipe data
-                recipe_data = {
-                    'title': self.recipes_table.item(current_row, 0).text(),
-                    'ingredients': [
-                        {'name': 'all-purpose flour', 'is_gluten_free': False},
-                        {'name': 'soy sauce', 'is_gluten_free': False},
-                        {'name': 'chicken breast', 'is_gluten_free': True}
-                    ]
-                }
-                
-                conversion_result = recipe_converter.convert_to_gluten_free(recipe_data)
-                
-                if conversion_result['is_already_gluten_free']:
-                    QMessageBox.information(self, "Already Gluten-Free", conversion_result['message'])
-                else:
-                    # Show conversion dialog
-                    dialog = QDialog(self)
-                    dialog.setWindowTitle("Convert to Gluten-Free")
-                    dialog.setModal(True)
-                    dialog.resize(500, 400)
-                    
-                    layout = QVBoxLayout(dialog)
-                    layout.addWidget(QLabel(f"Found {len(conversion_result['suggestions'])} ingredients that need gluten-free alternatives:"))
-                    
-                    # Show suggestions
-                    for i, suggestion in enumerate(conversion_result['suggestions']):
-                        group = QGroupBox(f"Ingredient {i+1}: {suggestion['original']['name']}")
-                        group_layout = QVBoxLayout(group)
-                        
-                        for alt in suggestion['alternatives']:
-                            alt_label = QLabel(f"• {alt['ingredient']} ({alt['ratio']}x) - {alt['notes']}")
-                            group_layout.addWidget(alt_label)
-                        
-                        layout.addWidget(group)
-                    
-                    button_layout = QHBoxLayout()
-                    auto_convert_btn = QPushButton("Auto Convert")
-                    manual_convert_btn = QPushButton("Manual Convert")
-                    cancel_btn = QPushButton("Cancel")
-                    
-                    auto_convert_btn.clicked.connect(dialog.accept)
-                    manual_convert_btn.clicked.connect(dialog.accept)
-                    cancel_btn.clicked.connect(dialog.reject)
-                    
-                    button_layout.addWidget(auto_convert_btn)
-                    button_layout.addWidget(manual_convert_btn)
-                    button_layout.addWidget(cancel_btn)
-                    layout.addLayout(button_layout)
-                    
-                    if dialog.exec() == QDialog.Accepted:
-                        # Auto convert using best substitutions
-                        converted_recipe = conversion_result['auto_convert']()
-                        QMessageBox.information(
-                            self, "Conversion Complete", 
-                            f"Recipe '{converted_recipe['title']}' has been converted to gluten-free!"
-                        )
-                    
-            except ImportError:
-                QMessageBox.information(self, "Convert Recipe", "Recipe conversion functionality will be implemented here.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to convert recipe: {str(e)}")
+    def handle_gf_conversion_request(self, recipe_data):
+        """Analyze recipe and suggest gluten-free alternatives"""
+        try:
+            from services.gluten_free_converter import gluten_free_converter
+            
+            # Analyze the recipe
+            analysis = gluten_free_converter.analyze_recipe(recipe_data)
+            
+            if not analysis['has_gluten']:
+                QMessageBox.information(self, "Already Gluten-Free", 
+                    "This recipe is already gluten-free! No conversion needed.")
+                return
+            
+            # Show analysis dialog
+            self._show_gf_analysis_dialog(self, recipe_data, analysis)
+            
+        except ImportError:
+            QMessageBox.warning(self, "Service Unavailable", 
+                "Gluten-free converter service is not available.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to analyze recipe: {str(e)}")
     
     def rank_recipes(self):
         """Rank recipes by relevance and safety"""
@@ -4480,19 +5444,23 @@ Top Ingredients:
             
             # Insert recipe
             cursor.execute("""
-                INSERT INTO recipes (title, instructions, prep_time, cook_time, servings, 
-                                   category, tags, image_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO recipes (title, source, url, description, instructions, prep_time, cook_time, servings, 
+                                   difficulty, category, tags, image_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                recipe_data['name'],
-                recipe_data['instructions'],
-                recipe_data['prep_time'],
-                recipe_data.get('cook_time', ''),
-                recipe_data.get('servings', 1),
-                recipe_data['category'],
-                recipe_data.get('tags', ''),
-                recipe_data.get('image_path', '')
-            ))
+            recipe_data['name'],
+            recipe_data.get('source', ''),
+            recipe_data.get('url', ''),
+            recipe_data.get('description', ''),
+            recipe_data['instructions'],
+            recipe_data['prep_time'],
+            recipe_data.get('cook_time', ''),
+            recipe_data.get('servings', 1),
+            recipe_data.get('difficulty', 'Medium'),
+            recipe_data['category'],
+            recipe_data.get('tags', ''),
+            recipe_data.get('image_path', '')
+        ))
             
             recipe_id = cursor.lastrowid
             
@@ -4512,23 +5480,41 @@ Top Ingredients:
                     print(f"Error processing recipe image: {e}")
             
             # Insert ingredients
-            for ingredient in recipe_data.get('ingredients', []):
-                cursor.execute("""
-                    INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    recipe_id,
-                    ingredient['name'],
-                    ingredient.get('amount', ''),
-                    ingredient.get('unit', ''),
-                    ingredient.get('notes', '')
-                ))
+            ingredients = recipe_data.get('ingredients', [])
+            if ingredients:  # Only process if ingredients exist and is not None
+                for ingredient in ingredients:
+                    if isinstance(ingredient, dict):
+                        cursor.execute("""
+                            INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            recipe_id,
+                            ingredient.get('name', ''),
+                            ingredient.get('amount', ''),
+                            ingredient.get('unit', ''),
+                            ingredient.get('notes', '')
+                        ))
+                    else:
+                        # Handle string ingredients
+                        cursor.execute("""
+                            INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            recipe_id,
+                            str(ingredient),
+                            '',
+                            '',
+                            ''
+                        ))
             
             db.commit()
+            db.close()
             return recipe_id
             
         except Exception as e:
             print(f"Error saving recipe to database: {e}")
+            if 'db' in locals():
+                db.close()
             return None
     
     def _update_recipe_in_database(self, recipe_id, recipe_data):
@@ -4559,43 +5545,76 @@ Top Ingredients:
             # Update recipe
             cursor.execute("""
                 UPDATE recipes 
-                SET title = ?, description = ?, prep_time = ?, cook_time = ?, servings = ?,
-                    difficulty = ?, category = ?, tags = ?, image_path = ?, updated_at = datetime('now')
+                SET title = ?, source = ?, url = ?, description = ?, prep_time = ?, cook_time = ?, servings = ?,
+                    difficulty = ?, category = ?, tags = ?, image_path = ?
                 WHERE id = ?
             """, (
-                recipe_data['name'],
-                recipe_data['description'],
-                recipe_data['prep_time'],
-                recipe_data.get('cook_time', ''),
-                recipe_data.get('servings', 1),
-                recipe_data['difficulty'],
-                recipe_data['category'],
-                recipe_data.get('tags', ''),
-                image_path,
-                recipe_id
-            ))
+            recipe_data['name'],
+            recipe_data.get('source', ''),
+            recipe_data.get('url', ''),
+            recipe_data.get('description', ''),
+            recipe_data['prep_time'],
+            recipe_data.get('cook_time', ''),
+            recipe_data.get('servings', 1),
+            recipe_data.get('difficulty', 'Medium'),
+            recipe_data['category'],
+            recipe_data.get('tags', ''),
+            image_path,
+            recipe_id
+        ))
             
             # Delete existing ingredients
             cursor.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
             
             # Insert updated ingredients
-            for ingredient in recipe_data.get('ingredients', []):
-                cursor.execute("""
-                    INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    recipe_id,
-                    ingredient['name'],
-                    ingredient.get('amount', ''),
-                    ingredient.get('unit', ''),
-                    ingredient.get('notes', '')
-                ))
+            ingredients = recipe_data.get('ingredients', [])
+            if ingredients:  # Only process if ingredients exist and is not None
+                for ingredient in ingredients:
+                    if isinstance(ingredient, dict):
+                        cursor.execute("""
+                            INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            recipe_id,
+                            ingredient.get('name', ''),
+                            ingredient.get('amount', ''),
+                            ingredient.get('unit', ''),
+                            ingredient.get('notes', '')
+                        ))
+                    else:
+                        # Handle string ingredients
+                        cursor.execute("""
+                            INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            recipe_id,
+                            str(ingredient),
+                            '',
+                            '',
+                            ''
+                        ))
             
             db.commit()
+            db.close()
             return True
             
         except Exception as e:
-            print(f"Error updating recipe in database: {e}")
+            # Handle encoding errors gracefully
+            try:
+                error_msg = str(e)
+                print(f"Error updating recipe in database for recipe_{recipe_id}: {error_msg}")
+                # Don't print recipe_data as it may contain Unicode characters that can't be encoded
+            except UnicodeEncodeError:
+                print(f"Error updating recipe in database for recipe_{recipe_id}: <encoding error>")
+            
+            import traceback
+            try:
+                traceback.print_exc()
+            except UnicodeEncodeError:
+                pass  # Skip traceback if it has encoding issues
+            
+            if 'db' in locals():
+                db.close()
             return False
     
     def _delete_recipe_from_database(self, recipe_id):
@@ -4765,9 +5784,21 @@ Top Ingredients:
 
         self.csv_radio.setChecked(True)
 
-        self.excel_radio = QRadioButton("Excel File")
+        self.excel_radio = QRadioButton("Excel File (.xlsx, .xls)")
 
         self.json_radio = QRadioButton("JSON File")
+        
+        self.xml_radio = QRadioButton("XML File")
+        
+        self.yaml_radio = QRadioButton("YAML File")
+        
+        self.md_radio = QRadioButton("Markdown File")
+        
+        self.pdf_radio = QRadioButton("PDF File")
+        
+        self.word_radio = QRadioButton("Word Document (.docx, .doc)")
+        
+        self.txt_radio = QRadioButton("Text File / Paste Recipe")
 
         
 
@@ -4776,9 +5807,21 @@ Top Ingredients:
         type_layout.addWidget(self.excel_radio)
 
         type_layout.addWidget(self.json_radio)
+        
+        type_layout.addWidget(self.xml_radio)
+        
+        type_layout.addWidget(self.yaml_radio)
+        
+        type_layout.addWidget(self.md_radio)
+        
+        type_layout.addWidget(self.pdf_radio)
+        
+        type_layout.addWidget(self.word_radio)
+        
+        type_layout.addWidget(self.txt_radio)
 
         
-
+        
         layout.addWidget(type_group)
 
         
@@ -4812,6 +5855,42 @@ Top Ingredients:
         
 
         file_layout.addLayout(file_path_layout)
+        
+        # Text input area for pasting recipes
+        self.text_input_label = QLabel("Or paste recipe text here:")
+        self.text_input_label.setVisible(False)
+        file_layout.addWidget(self.text_input_label)
+        
+        self.recipe_text_input = QTextEdit()
+        self.recipe_text_input.setPlaceholderText(
+            "Paste your recipe here...\n\n"
+            "Example format:\n"
+            "Recipe Name: Gluten-Free Pancakes\n"
+            "Category: Breakfast\n"
+            "Prep Time: 10 min\n"
+            "Cook Time: 20 min\n"
+            "Servings: 4\n"
+            "Difficulty: Easy\n\n"
+            "Description:\n"
+            "Fluffy and delicious gluten-free pancakes\n\n"
+            "Ingredients:\n"
+            "- 2 cups gluten-free flour\n"
+            "- 2 eggs\n"
+            "- 1 1/2 cups milk\n"
+            "- 2 tbsp sugar\n\n"
+            "Instructions:\n"
+            "1. Mix dry ingredients\n"
+            "2. Add wet ingredients\n"
+            "3. Cook on griddle\n\n"
+            "Notes:\n"
+            "Can be frozen for later use"
+        )
+        self.recipe_text_input.setMinimumHeight(200)
+        self.recipe_text_input.setVisible(False)
+        file_layout.addWidget(self.recipe_text_input)
+        
+        # Connect radio buttons to toggle visibility
+        self.txt_radio.toggled.connect(self._toggle_txt_input_mode)
 
         layout.addWidget(file_group)
 
@@ -4917,6 +5996,18 @@ Top Ingredients:
 
         elif self.json_radio.isChecked():
             file_filter = "JSON Files (*.json);;All Files (*)"
+        elif self.xml_radio.isChecked():
+            file_filter = "XML Files (*.xml);;All Files (*)"
+        elif self.yaml_radio.isChecked():
+            file_filter = "YAML Files (*.yaml *.yml);;All Files (*)"
+        elif self.md_radio.isChecked():
+            file_filter = "Markdown Files (*.md *.markdown);;All Files (*)"
+        elif self.pdf_radio.isChecked():
+            file_filter = "PDF Files (*.pdf);;All Files (*)"
+        elif self.word_radio.isChecked():
+            file_filter = "Word Documents (*.docx *.doc);;All Files (*)"
+        elif self.txt_radio.isChecked():
+            file_filter = "Text Files (*.txt);;All Files (*)"
         else:
             file_filter = "All Files (*)"
 
@@ -4949,31 +6040,61 @@ Top Ingredients:
             default_category = self.default_category_edit.text().strip() or "Main Course"
 
             
-
-            if not file_path:
-
+            
+            # For TXT import, either file path or pasted text is acceptable
+            if self.txt_radio.isChecked():
+                recipe_text = self.recipe_text_input.toPlainText().strip()
+                if not file_path and not recipe_text:
+                    QMessageBox.warning(self, "Validation Error", "Please select a file or paste recipe text.")
+                    return
+            elif not file_path:
                 QMessageBox.warning(self, "Validation Error", "Please select a file to import.")
-
                 return
             
+
+            recipe_id = None
             
-
             if self.csv_radio.isChecked():
-
-                self.import_from_csv(file_path, duplicate_handling, default_category)
+                recipe_id = self.import_from_csv(file_path, duplicate_handling, default_category)
 
             elif self.excel_radio.isChecked():
-
-                self.import_from_excel(file_path, duplicate_handling, default_category)
+                recipe_id = self.import_from_excel(file_path, duplicate_handling, default_category)
 
             elif self.json_radio.isChecked():
-
-                self.import_from_json(file_path, duplicate_handling, default_category)
-
+                recipe_id = self.import_from_json(file_path, duplicate_handling, default_category)
             
+            elif self.xml_radio.isChecked():
+                recipe_id = self.import_from_xml(file_path, duplicate_handling, default_category)
+            
+            elif self.yaml_radio.isChecked():
+                recipe_id = self.import_from_yaml(file_path, duplicate_handling, default_category)
+            
+            elif self.md_radio.isChecked():
+                recipe_id = self.import_from_markdown(file_path, duplicate_handling, default_category)
+            
+            elif self.pdf_radio.isChecked():
+                recipe_id = self.import_from_pdf(file_path, duplicate_handling, default_category)
+            
+            elif self.word_radio.isChecked():
+                recipe_id = self.import_from_word(file_path, duplicate_handling, default_category)
+            
+            elif self.txt_radio.isChecked():
+                # Check if using pasted text or file
+                recipe_text = self.recipe_text_input.toPlainText().strip()
+                if recipe_text:
+                    recipe_id = self.import_from_txt_content(recipe_text, duplicate_handling, default_category)
+                elif file_path:
+                    recipe_id = self.import_from_txt(file_path, duplicate_handling, default_category)
+                else:
+                    QMessageBox.warning(self, "Validation Error", "Please select a file or paste recipe text.")
+                    return
 
             # Refresh the recipes display
             self.load_recipes()
+            
+            # Open recipe view if import was successful
+            if recipe_id:
+                self._view_recipe_by_id(recipe_id)
             
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to import recipes: {str(e)}")
@@ -5001,8 +6122,7 @@ Top Ingredients:
                 reader = csv.DictReader(file)
 
                 imported_count = 0
-
-                
+                last_recipe_id = None
 
                 for row in reader:
 
@@ -5047,8 +6167,8 @@ Top Ingredients:
                     
 
                     # Insert recipe
-
-                    conn.execute("""
+                    cursor = conn.cursor()
+                    cursor.execute("""
 
                         INSERT OR REPLACE INTO recipes 
 
@@ -5058,6 +6178,7 @@ Top Ingredients:
 
                     """, (title, category, servings, cook_time, ingredients, instructions, notes))
 
+                    last_recipe_id = cursor.lastrowid
                     imported_count += 1
 
                 
@@ -5067,6 +6188,9 @@ Top Ingredients:
                 QMessageBox.information(self, "Import Complete", 
 
                                       f"Successfully imported {imported_count} recipes from CSV file.")
+                
+                # Return the last imported recipe ID for auto-viewing
+                return last_recipe_id
                             
         except Exception as e:
             conn.rollback()
@@ -5078,33 +6202,1843 @@ Top Ingredients:
 
     def import_from_excel(self, file_path, duplicate_handling, default_category):
         """Import recipes from Excel file"""
-        QMessageBox.information(self, "Excel Import", 
-                               f"Excel import would process {file_path}.\n\n"
-                               "This feature would:\n"
+        try:
+            import pandas as pd
+            from utils.db import get_connection
+            
+            # Read Excel file
+            df = pd.read_excel(file_path)
+            
+            if df.empty:
+                QMessageBox.warning(self, "Empty File", "Excel file is empty or contains no data.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            imported_count = 0
+            last_recipe_id = None
+            
+            for index, row in df.iterrows():
+                # Convert row to dictionary
+                recipe_data = row.to_dict()
+                
+                # Normalize recipe data
+                normalized_recipe = self._normalize_excel_recipe(recipe_data, default_category)
+                
+                if not normalized_recipe:
+                    continue
+                
+                # Handle duplicates
+                if duplicate_handling == "Skip duplicates":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    if cursor.fetchone():
+                        continue
+                elif duplicate_handling == "Update existing":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    existing = cursor.fetchone()
+                    if existing:
+                        recipe_id = existing[0]
+                        # Update existing recipe
+                        cursor.execute("""
+                            UPDATE recipes 
+                            SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                                ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                            WHERE id = ?
+                        """, (
+                            normalized_recipe['category'], normalized_recipe['servings'], 
+                            normalized_recipe['cook_time'], normalized_recipe['prep_time'], 
+                            normalized_recipe['ingredients'], normalized_recipe['instructions'],
+                            normalized_recipe['notes'], normalized_recipe['difficulty'], 
+                            normalized_recipe['description'], recipe_id
+                        ))
+                        last_recipe_id = recipe_id
+                        imported_count += 1
+                        continue
+                
+                # Insert new recipe
+                cursor.execute("""
+                    INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                       ingredients, instructions, notes, difficulty, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    normalized_recipe['title'], normalized_recipe['category'], 
+                    normalized_recipe['servings'], normalized_recipe['cook_time'],
+                    normalized_recipe['prep_time'], normalized_recipe['ingredients'],
+                    normalized_recipe['instructions'], normalized_recipe['notes'],
+                    normalized_recipe['difficulty'], normalized_recipe['description']
+                ))
+                
+                last_recipe_id = cursor.lastrowid
+                imported_count += 1
+            
+            conn.commit()
+            conn.close()
+            
+            if imported_count > 0:
+                QMessageBox.information(self, "Import Complete", 
+                                      f"Successfully imported {imported_count} recipes from Excel file.")
+                return last_recipe_id
+            else:
+                QMessageBox.information(self, "Import Complete", "No new recipes imported.")
+                return None
+                
+        except ImportError:
+            QMessageBox.critical(self, "Missing Dependency", 
+                               "pandas library is required for Excel import.\n"
+                               "Please install it with: pip install pandas openpyxl")
+            return None
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from Excel file: {str(e)}")
+            return None
 
-                               "�� � Parse Excel workbook\n"
-
-                               "�� � Extract recipe data\n"
-
-                               "�� � Handle multiple sheets\n"
-
-                               "�� � Validate data format")
+    
+    def _normalize_excel_recipe(self, recipe_data, default_category):
+        """Normalize Excel recipe data to standard format"""
+        try:
+            # Handle different column names (case-insensitive)
+            title = None
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['title', 'name', 'recipe_name', 'recipe']:
+                    title = str(recipe_data[key]).strip()
+                    break
+            
+            if not title or title.lower() in ['nan', 'none', '']:
+                return None
+            
+            # Extract other fields with flexible column names
+            category = default_category
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['category', 'type', 'cuisine', 'kind']:
+                    cat_val = str(recipe_data[key]).strip()
+                    if cat_val.lower() not in ['nan', 'none', '']:
+                        category = cat_val
+                    break
+            
+            servings = 4
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['servings', 'serving_size', 'serves', 'yield']:
+                    try:
+                        servings = int(float(str(recipe_data[key])))
+                        break
+                    except (ValueError, TypeError):
+                        pass
+            
+            cook_time = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['cook_time', 'cooking_time', 'total_time', 'time']:
+                    time_val = str(recipe_data[key]).strip()
+                    if time_val.lower() not in ['nan', 'none', '']:
+                        cook_time = time_val
+                    break
+            
+            prep_time = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['prep_time', 'preparation_time', 'prep']:
+                    time_val = str(recipe_data[key]).strip()
+                    if time_val.lower() not in ['nan', 'none', '']:
+                        prep_time = time_val
+                    break
+            
+            difficulty = 'Medium'
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['difficulty', 'level', 'skill_level', 'hardness']:
+                    diff_val = str(recipe_data[key]).strip()
+                    if diff_val.lower() not in ['nan', 'none', '']:
+                        difficulty = diff_val
+                    break
+            
+            description = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['description', 'summary', 'intro', 'about']:
+                    desc_val = str(recipe_data[key]).strip()
+                    if desc_val.lower() not in ['nan', 'none', '']:
+                        description = desc_val
+                    break
+            
+            notes = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['notes', 'tips', 'comments', 'remarks']:
+                    notes_val = str(recipe_data[key]).strip()
+                    if notes_val.lower() not in ['nan', 'none', '']:
+                        notes = notes_val
+                    break
+            
+            ingredients = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['ingredients', 'ingredient_list', 'ingredient']:
+                    ing_val = str(recipe_data[key]).strip()
+                    if ing_val.lower() not in ['nan', 'none', '']:
+                        ingredients = ing_val
+                    break
+            
+            instructions = ''
+            for key in recipe_data.keys():
+                if key and str(key).lower() in ['instructions', 'directions', 'steps', 'method']:
+                    inst_val = str(recipe_data[key]).strip()
+                    if inst_val.lower() not in ['nan', 'none', '']:
+                        instructions = inst_val
+                    break
+            
+            return {
+                'title': title,
+                'category': category,
+                'servings': servings,
+                'cook_time': cook_time,
+                'prep_time': prep_time,
+                'difficulty': difficulty,
+                'description': description,
+                'notes': notes,
+                'ingredients': ingredients,
+                'instructions': instructions
+            }
+            
+        except Exception as e:
+            print(f"Error normalizing Excel recipe: {e}")
+            return None
 
     
 
     def import_from_json(self, file_path, duplicate_handling, default_category):
         """Import recipes from JSON file"""
+        import json
+        from utils.db import get_connection
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+            
+            # Handle different JSON structures
+            if isinstance(data, list):
+                recipes = data
+            elif isinstance(data, dict):
+                if 'recipes' in data:
+                    recipes = data['recipes']
+                else:
+                    recipes = [data]  # Single recipe
+            else:
+                QMessageBox.warning(self, "Invalid JSON", "JSON file must contain a recipe or list of recipes.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            imported_count = 0
+            last_recipe_id = None
+            
+            for recipe_data in recipes:
+                # Normalize recipe data
+                normalized_recipe = self._normalize_json_recipe(recipe_data, default_category)
+                
+                if not normalized_recipe:
+                    continue
+                
+                # Handle duplicates
+                if duplicate_handling == "Skip duplicates":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    if cursor.fetchone():
+                        continue
+                elif duplicate_handling == "Update existing":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    existing = cursor.fetchone()
+                    if existing:
+                        recipe_id = existing[0]
+                        # Update existing recipe
+                        cursor.execute("""
+                            UPDATE recipes 
+                            SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                                ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                            WHERE id = ?
+                        """, (
+                            normalized_recipe['category'], normalized_recipe['servings'], 
+                            normalized_recipe['cook_time'], normalized_recipe['prep_time'], 
+                            normalized_recipe['ingredients'], normalized_recipe['instructions'],
+                            normalized_recipe['notes'], normalized_recipe['difficulty'], 
+                            normalized_recipe['description'], recipe_id
+                        ))
+                        last_recipe_id = recipe_id
+                        imported_count += 1
+                        continue
+                
+                # Insert new recipe
+                cursor.execute("""
+                    INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                       ingredients, instructions, notes, difficulty, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    normalized_recipe['title'], normalized_recipe['category'], 
+                    normalized_recipe['servings'], normalized_recipe['cook_time'],
+                    normalized_recipe['prep_time'], normalized_recipe['ingredients'],
+                    normalized_recipe['instructions'], normalized_recipe['notes'],
+                    normalized_recipe['difficulty'], normalized_recipe['description']
+                ))
+                
+                last_recipe_id = cursor.lastrowid
+                imported_count += 1
+            
+            conn.commit()
+            conn.close()
+            
+            if imported_count > 0:
+                QMessageBox.information(self, "Import Complete", 
+                                      f"Successfully imported {imported_count} recipes from JSON file.")
+                return last_recipe_id
+            else:
+                QMessageBox.information(self, "Import Complete", "No new recipes imported.")
+                return None
+                
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(self, "JSON Error", f"Invalid JSON format: {str(e)}")
+            return None
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from JSON file: {str(e)}")
+            return None
 
-        QMessageBox.information(self, "JSON Import", 
-                               f"JSON import would process {file_path}.\n\n"
+    
+    def _normalize_json_recipe(self, recipe_data, default_category):
+        """Normalize JSON recipe data to standard format"""
+        try:
+            # Handle different field names
+            title = (recipe_data.get('title') or recipe_data.get('name') or 
+                    recipe_data.get('recipe_name') or '').strip()
+            
+            if not title:
+                return None
+            
+            # Extract other fields with fallbacks
+            category = (recipe_data.get('category') or recipe_data.get('type') or 
+                      recipe_data.get('cuisine') or default_category).strip()
+            
+            servings = recipe_data.get('servings') or recipe_data.get('serving_size') or 4
+            try:
+                servings = int(servings)
+            except (ValueError, TypeError):
+                servings = 4
+            
+            cook_time = (recipe_data.get('cook_time') or recipe_data.get('cooking_time') or 
+                        recipe_data.get('total_time') or '').strip()
+            
+            prep_time = (recipe_data.get('prep_time') or recipe_data.get('preparation_time') or 
+                        recipe_data.get('prep') or '').strip()
+            
+            difficulty = (recipe_data.get('difficulty') or recipe_data.get('level') or 
+                         recipe_data.get('skill_level') or 'Medium').strip()
+            
+            description = (recipe_data.get('description') or recipe_data.get('summary') or 
+                          recipe_data.get('intro') or '').strip()
+            
+            notes = (recipe_data.get('notes') or recipe_data.get('tips') or 
+                    recipe_data.get('comments') or '').strip()
+            
+            # Handle ingredients - can be list or string
+            ingredients = recipe_data.get('ingredients') or recipe_data.get('ingredient_list') or []
+            if isinstance(ingredients, str):
+                ingredients = ingredients.strip()
+            elif isinstance(ingredients, list):
+                # Convert list to string
+                ingredients = '\n'.join(str(ing) for ing in ingredients)
+            else:
+                ingredients = ''
+            
+            # Handle instructions - can be list or string
+            instructions = recipe_data.get('instructions') or recipe_data.get('directions') or recipe_data.get('steps') or []
+            if isinstance(instructions, str):
+                instructions = instructions.strip()
+            elif isinstance(instructions, list):
+                # Convert list to string
+                instructions = '\n'.join(str(step) for step in instructions)
+            else:
+                instructions = ''
+            
+            return {
+                'title': title,
+                'category': category,
+                'servings': servings,
+                'cook_time': cook_time,
+                'prep_time': prep_time,
+                'difficulty': difficulty,
+                'description': description,
+                'notes': notes,
+                'ingredients': ingredients,
+                'instructions': instructions
+            }
+            
+        except Exception as e:
+            print(f"Error normalizing JSON recipe: {e}")
+            return None
 
-                               "This feature would:\n"
+    
+    def import_from_xml(self, file_path, duplicate_handling, default_category):
+        """Import recipes from XML file"""
+        try:
+            import xml.etree.ElementTree as ET
+            from utils.db import get_connection
+            
+            # Parse XML file
+            tree = ET.parse(file_path)
+            root = tree.getroot()
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            imported_count = 0
+            last_recipe_id = None
+            
+            # Handle different XML structures
+            recipes = []
+            if root.tag.lower() in ['recipes', 'recipebook', 'cookbook']:
+                recipes = root.findall('.//recipe')
+            elif root.tag.lower() == 'recipe':
+                recipes = [root]
+            else:
+                # Try to find recipe elements anywhere in the tree
+                recipes = root.findall('.//recipe')
+            
+            if not recipes:
+                QMessageBox.warning(self, "No Recipes Found", "No recipe elements found in XML file.")
+                return None
+            
+            for recipe_elem in recipes:
+                # Parse recipe from XML element
+                recipe_data = self._parse_xml_recipe(recipe_elem, default_category)
+                
+                if not recipe_data:
+                    continue
+                
+                # Handle duplicates
+                if duplicate_handling == "Skip duplicates":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                    if cursor.fetchone():
+                        continue
+                elif duplicate_handling == "Update existing":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                    existing = cursor.fetchone()
+                    if existing:
+                        recipe_id = existing[0]
+                        # Update existing recipe
+                        cursor.execute("""
+                            UPDATE recipes 
+                            SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                                ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                            WHERE id = ?
+                        """, (
+                            recipe_data['category'], recipe_data['servings'], 
+                            recipe_data['cook_time'], recipe_data['prep_time'], 
+                            recipe_data['ingredients'], recipe_data['instructions'],
+                            recipe_data['notes'], recipe_data['difficulty'], 
+                            recipe_data['description'], recipe_id
+                        ))
+                        last_recipe_id = recipe_id
+                        imported_count += 1
+                        continue
+                
+                # Insert new recipe
+                cursor.execute("""
+                    INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                       ingredients, instructions, notes, difficulty, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    recipe_data['title'], recipe_data['category'], 
+                    recipe_data['servings'], recipe_data['cook_time'],
+                    recipe_data['prep_time'], recipe_data['ingredients'],
+                    recipe_data['instructions'], recipe_data['notes'],
+                    recipe_data['difficulty'], recipe_data['description']
+                ))
+                
+                last_recipe_id = cursor.lastrowid
+                imported_count += 1
+            
+            conn.commit()
+            conn.close()
+            
+            if imported_count > 0:
+                QMessageBox.information(self, "Import Complete", 
+                                      f"Successfully imported {imported_count} recipes from XML file.")
+                return last_recipe_id
+            else:
+                QMessageBox.information(self, "Import Complete", "No new recipes imported.")
+                return None
+                
+        except ET.ParseError as e:
+            QMessageBox.critical(self, "XML Error", f"Invalid XML format: {str(e)}")
+            return None
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from XML file: {str(e)}")
+            return None
 
-                               "�� � Parse JSON structure\n"
+    
+    def _parse_xml_recipe(self, recipe_elem, default_category):
+        """Parse recipe from XML element"""
+        try:
+            # Extract title
+            title = recipe_elem.find('title')
+            if title is None:
+                title = recipe_elem.find('name')
+            if title is None:
+                title = recipe_elem.get('name', '')
+            else:
+                title = title.text or ''
+            
+            if not title.strip():
+                return None
+            
+            # Extract other fields
+            category = default_category
+            cat_elem = recipe_elem.find('category')
+            if cat_elem is not None:
+                category = cat_elem.text or default_category
+            
+            servings = 4
+            servings_elem = recipe_elem.find('servings')
+            if servings_elem is not None:
+                try:
+                    servings = int(servings_elem.text or 4)
+                except (ValueError, TypeError):
+                    servings = 4
+            
+            cook_time = ''
+            cook_elem = recipe_elem.find('cook_time')
+            if cook_elem is not None:
+                cook_time = cook_elem.text or ''
+            
+            prep_time = ''
+            prep_elem = recipe_elem.find('prep_time')
+            if prep_elem is not None:
+                prep_time = prep_elem.text or ''
+            
+            difficulty = 'Medium'
+            diff_elem = recipe_elem.find('difficulty')
+            if diff_elem is not None:
+                difficulty = diff_elem.text or 'Medium'
+            
+            description = ''
+            desc_elem = recipe_elem.find('description')
+            if desc_elem is not None:
+                description = desc_elem.text or ''
+            
+            notes = ''
+            notes_elem = recipe_elem.find('notes')
+            if notes_elem is not None:
+                notes = notes_elem.text or ''
+            
+            # Extract ingredients
+            ingredients = ''
+            ing_elem = recipe_elem.find('ingredients')
+            if ing_elem is not None:
+                # Try to get text content or join child elements
+                if ing_elem.text:
+                    ingredients = ing_elem.text.strip()
+                else:
+                    # Join all text from child elements
+                    ingredient_items = []
+                    for item in ing_elem.findall('ingredient'):
+                        if item.text:
+                            ingredient_items.append(item.text.strip())
+                    ingredients = '\n'.join(ingredient_items)
+            
+            # Extract instructions
+            instructions = ''
+            inst_elem = recipe_elem.find('instructions')
+            if inst_elem is None:
+                inst_elem = recipe_elem.find('directions')
+            if inst_elem is None:
+                inst_elem = recipe_elem.find('steps')
+            
+            if inst_elem is not None:
+                # Try to get text content or join child elements
+                if inst_elem.text:
+                    instructions = inst_elem.text.strip()
+                else:
+                    # Join all text from child elements
+                    step_items = []
+                    for step in inst_elem.findall('step'):
+                        if step.text:
+                            step_items.append(step.text.strip())
+                    instructions = '\n'.join(step_items)
+            
+            return {
+                'title': title.strip(),
+                'category': category.strip(),
+                'servings': servings,
+                'cook_time': cook_time.strip(),
+                'prep_time': prep_time.strip(),
+                'difficulty': difficulty.strip(),
+                'description': description.strip(),
+                'notes': notes.strip(),
+                'ingredients': ingredients.strip(),
+                'instructions': instructions.strip()
+            }
+            
+        except Exception as e:
+            print(f"Error parsing XML recipe: {e}")
+            return None
 
-                               "�� � Extract recipe data\n"
+    
+    def import_from_yaml(self, file_path, duplicate_handling, default_category):
+        """Import recipes from YAML file"""
+        try:
+            import yaml
+            from utils.db import get_connection
+            
+            with open(file_path, 'r', encoding='utf-8') as file:
+                data = yaml.safe_load(file)
+            
+            # Handle different YAML structures
+            if isinstance(data, list):
+                recipes = data
+            elif isinstance(data, dict):
+                if 'recipes' in data:
+                    recipes = data['recipes']
+                else:
+                    recipes = [data]  # Single recipe
+            else:
+                QMessageBox.warning(self, "Invalid YAML", "YAML file must contain a recipe or list of recipes.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            imported_count = 0
+            last_recipe_id = None
+            
+            for recipe_data in recipes:
+                # Normalize recipe data (reuse JSON normalization)
+                normalized_recipe = self._normalize_json_recipe(recipe_data, default_category)
+                
+                if not normalized_recipe:
+                    continue
+                
+                # Handle duplicates
+                if duplicate_handling == "Skip duplicates":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    if cursor.fetchone():
+                        continue
+                elif duplicate_handling == "Update existing":
+                    cursor.execute("SELECT id FROM recipes WHERE title = ?", (normalized_recipe['title'],))
+                    existing = cursor.fetchone()
+                    if existing:
+                        recipe_id = existing[0]
+                        # Update existing recipe
+                        cursor.execute("""
+                            UPDATE recipes 
+                            SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                                ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                            WHERE id = ?
+                        """, (
+                            normalized_recipe['category'], normalized_recipe['servings'], 
+                            normalized_recipe['cook_time'], normalized_recipe['prep_time'], 
+                            normalized_recipe['ingredients'], normalized_recipe['instructions'],
+                            normalized_recipe['notes'], normalized_recipe['difficulty'], 
+                            normalized_recipe['description'], recipe_id
+                        ))
+                        last_recipe_id = recipe_id
+                        imported_count += 1
+                        continue
+                
+                # Insert new recipe
+                cursor.execute("""
+                    INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                       ingredients, instructions, notes, difficulty, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    normalized_recipe['title'], normalized_recipe['category'], 
+                    normalized_recipe['servings'], normalized_recipe['cook_time'],
+                    normalized_recipe['prep_time'], normalized_recipe['ingredients'],
+                    normalized_recipe['instructions'], normalized_recipe['notes'],
+                    normalized_recipe['difficulty'], normalized_recipe['description']
+                ))
+                
+                last_recipe_id = cursor.lastrowid
+                imported_count += 1
+            
+            conn.commit()
+            conn.close()
+            
+            if imported_count > 0:
+                QMessageBox.information(self, "Import Complete", 
+                                      f"Successfully imported {imported_count} recipes from YAML file.")
+                return last_recipe_id
+            else:
+                QMessageBox.information(self, "Import Complete", "No new recipes imported.")
+                return None
+                
+        except ImportError:
+            QMessageBox.critical(self, "Missing Dependency", 
+                               "PyYAML library is required for YAML import.\n"
+                               "Please install it with: pip install pyyaml")
+            return None
+        except yaml.YAMLError as e:
+            QMessageBox.critical(self, "YAML Error", f"Invalid YAML format: {str(e)}")
+            return None
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from YAML file: {str(e)}")
+            return None
 
-                               "�� � Handle nested objects\n"
+    
+    def import_from_markdown(self, file_path, duplicate_handling, default_category):
+        """Import recipes from Markdown file"""
+        try:
+            from utils.db import get_connection
+            
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+            
+            # Parse markdown content
+            recipe_data = self._parse_markdown_recipe(content, default_category)
+            
+            if not recipe_data:
+                QMessageBox.warning(self, "Parse Error", "Could not parse recipe from Markdown file.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Handle duplicates
+            if duplicate_handling == "Skip duplicates":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                if cursor.fetchone():
+                    QMessageBox.information(self, "Duplicate", f"Recipe '{recipe_data['title']}' already exists. Skipping.")
+                    conn.close()
+                    return None
+            elif duplicate_handling == "Update existing":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                existing = cursor.fetchone()
+                if existing:
+                    recipe_id = existing[0]
+                    # Update existing recipe
+                    cursor.execute("""
+                        UPDATE recipes 
+                        SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                            ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                        WHERE id = ?
+                    """, (
+                        recipe_data['category'], recipe_data['servings'], 
+                        recipe_data['cook_time'], recipe_data['prep_time'], 
+                        recipe_data['ingredients'], recipe_data['instructions'],
+                        recipe_data['notes'], recipe_data['difficulty'], 
+                        recipe_data['description'], recipe_id
+                    ))
+                    conn.commit()
+                    conn.close()
+                    QMessageBox.information(self, "Success", f"Updated recipe '{recipe_data['title']}'")
+                    return recipe_id
+            
+            # Insert new recipe
+            cursor.execute("""
+                INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                   ingredients, instructions, notes, difficulty, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                recipe_data['title'], recipe_data['category'], 
+                recipe_data['servings'], recipe_data['cook_time'],
+                recipe_data['prep_time'], recipe_data['ingredients'],
+                recipe_data['instructions'], recipe_data['notes'],
+                recipe_data['difficulty'], recipe_data['description']
+            ))
+            
+            recipe_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            QMessageBox.information(self, "Success", f"Imported recipe '{recipe_data['title']}'")
+            return recipe_id
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from Markdown file: {str(e)}")
+            return None
 
-                               "�� � Validate schema")
+    
+    def _parse_markdown_recipe(self, content, default_category):
+        """Parse recipe from Markdown content"""
+        import re
+        
+        try:
+            lines = content.split('\n')
+            
+            # Extract title (first # heading)
+            title = ''
+            for line in lines:
+                if line.strip().startswith('# '):
+                    title = line.strip()[2:].strip()
+                    break
+            
+            if not title:
+                return None
+            
+            # Extract metadata from frontmatter or headers
+            category = default_category
+            servings = 4
+            cook_time = ''
+            prep_time = ''
+            difficulty = 'Medium'
+            description = ''
+            notes = ''
+            
+            # Look for metadata in various formats
+            for line in lines:
+                line = line.strip()
+                if line.startswith('**') and line.endswith('**'):
+                    # Bold metadata
+                    if 'Category:' in line or 'Type:' in line:
+                        category = line.split(':', 1)[1].replace('**', '').strip()
+                    elif 'Servings:' in line:
+                        try:
+                            servings = int(line.split(':', 1)[1].replace('**', '').strip())
+                        except (ValueError, TypeError):
+                            pass
+                    elif 'Cook Time:' in line:
+                        cook_time = line.split(':', 1)[1].replace('**', '').strip()
+                    elif 'Prep Time:' in line:
+                        prep_time = line.split(':', 1)[1].replace('**', '').strip()
+                    elif 'Difficulty:' in line:
+                        difficulty = line.split(':', 1)[1].replace('**', '').strip()
+                elif ':' in line and not line.startswith('#'):
+                    # Regular metadata
+                    if 'Category:' in line or 'Type:' in line:
+                        category = line.split(':', 1)[1].strip()
+                    elif 'Servings:' in line:
+                        try:
+                            servings = int(line.split(':', 1)[1].strip())
+                        except (ValueError, TypeError):
+                            pass
+                    elif 'Cook Time:' in line:
+                        cook_time = line.split(':', 1)[1].strip()
+                    elif 'Prep Time:' in line:
+                        prep_time = line.split(':', 1)[1].strip()
+                    elif 'Difficulty:' in line:
+                        difficulty = line.split(':', 1)[1].strip()
+            
+            # Extract ingredients (look for ## Ingredients or similar)
+            ingredients = ''
+            in_ingredients = False
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped.lower().startswith('## ingredients') or line_stripped.lower().startswith('### ingredients'):
+                    in_ingredients = True
+                    continue
+                elif in_ingredients:
+                    if line_stripped.startswith('##') or line_stripped.startswith('###'):
+                        break
+                    if line_stripped.startswith('- ') or line_stripped.startswith('* '):
+                        ingredients += line_stripped[2:] + '\n'
+                    elif line_stripped and not line_stripped.startswith('#'):
+                        ingredients += line_stripped + '\n'
+            
+            # Extract instructions (look for ## Instructions or similar)
+            instructions = ''
+            in_instructions = False
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped.lower().startswith('## instructions') or line_stripped.lower().startswith('## directions') or line_stripped.lower().startswith('## steps'):
+                    in_instructions = True
+                    continue
+                elif in_instructions:
+                    if line_stripped.startswith('##') or line_stripped.startswith('###'):
+                        break
+                    if line_stripped and not line_stripped.startswith('#'):
+                        instructions += line_stripped + '\n'
+            
+            # Extract description (text before ingredients)
+            description_lines = []
+            in_description = False
+            for line in lines:
+                line_stripped = line.strip()
+                if line_stripped.startswith('# '):
+                    in_description = True
+                    continue
+                elif line_stripped.lower().startswith('## ingredients') or line_stripped.lower().startswith('## instructions'):
+                    break
+                elif in_description and line_stripped and not line_stripped.startswith('#'):
+                    description_lines.append(line_stripped)
+            
+            description = ' '.join(description_lines)
+            
+            return {
+                'title': title,
+                'category': category,
+                'servings': servings,
+                'cook_time': cook_time,
+                'prep_time': prep_time,
+                'difficulty': difficulty,
+                'description': description,
+                'notes': notes,
+                'ingredients': ingredients.strip(),
+                'instructions': instructions.strip()
+            }
+            
+        except Exception as e:
+            print(f"Error parsing Markdown recipe: {e}")
+            return None
 
+    
+    def import_from_pdf(self, file_path, duplicate_handling, default_category):
+        """Import recipes from PDF file"""
+        try:
+            import os
+            from utils.db import get_connection
+            
+            # Extract text from PDF
+            pdf_text = self._extract_pdf_text(file_path)
+            
+            if not pdf_text:
+                QMessageBox.warning(self, "PDF Error", "Could not extract text from PDF file.")
+                return None
+            
+            # Parse the extracted text as a recipe
+            recipe_data = self._parse_pdf_recipe(pdf_text, default_category)
+            
+            if not recipe_data:
+                QMessageBox.warning(self, "Parse Error", "Could not parse recipe from PDF file.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Handle duplicates
+            if duplicate_handling == "Skip duplicates":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                if cursor.fetchone():
+                    QMessageBox.information(self, "Duplicate", f"Recipe '{recipe_data['title']}' already exists. Skipping.")
+                    conn.close()
+                    return None
+            elif duplicate_handling == "Update existing":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                existing = cursor.fetchone()
+                if existing:
+                    recipe_id = existing[0]
+                    # Update existing recipe
+                    cursor.execute("""
+                        UPDATE recipes 
+                        SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                            ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                        WHERE id = ?
+                    """, (
+                        recipe_data['category'], recipe_data['servings'], 
+                        recipe_data['cook_time'], recipe_data['prep_time'], 
+                        recipe_data['ingredients'], recipe_data['instructions'],
+                        recipe_data['notes'], recipe_data['difficulty'], 
+                        recipe_data['description'], recipe_id
+                    ))
+                    conn.commit()
+                    conn.close()
+                    QMessageBox.information(self, "Success", f"Updated recipe '{recipe_data['title']}'")
+                    return recipe_id
+            
+            # Insert new recipe
+            cursor.execute("""
+                INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                   ingredients, instructions, notes, difficulty, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                recipe_data['title'], recipe_data['category'], 
+                recipe_data['servings'], recipe_data['cook_time'],
+                recipe_data['prep_time'], recipe_data['ingredients'],
+                recipe_data['instructions'], recipe_data['notes'],
+                recipe_data['difficulty'], recipe_data['description']
+            ))
+            
+            recipe_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            QMessageBox.information(self, "Success", f"Imported recipe '{recipe_data['title']}' from PDF")
+            return recipe_id
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from PDF file: {str(e)}")
+            return None
+
+    
+    def _extract_pdf_text(self, file_path):
+        """Extract text from PDF file using multiple methods"""
+        try:
+            # Try PyPDF2 first (more common)
+            try:
+                import PyPDF2
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text.strip()
+            except ImportError:
+                pass
+            
+            # Try pdfplumber (better text extraction)
+            try:
+                import pdfplumber
+                text = ""
+                with pdfplumber.open(file_path) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                return text.strip()
+            except ImportError:
+                pass
+            
+            # Try pdfminer (fallback)
+            try:
+                from pdfminer.high_level import extract_text
+                text = extract_text(file_path)
+                return text.strip()
+            except ImportError:
+                pass
+            
+            # If no PDF libraries are available
+            QMessageBox.critical(self, "Missing Dependency", 
+                               "No PDF processing library found.\n"
+                               "Please install one of the following:\n"
+                               "• pip install PyPDF2\n"
+                               "• pip install pdfplumber\n"
+                               "• pip install pdfminer.six")
+            return None
+            
+        except Exception as e:
+            print(f"Error extracting PDF text: {e}")
+            return None
+
+    
+    def _parse_pdf_recipe(self, pdf_text, default_category):
+        """Parse recipe from extracted PDF text"""
+        import re
+        
+        try:
+            lines = pdf_text.split('\n')
+            
+            # Clean up the text - remove extra whitespace and normalize
+            cleaned_lines = []
+            for line in lines:
+                line = line.strip()
+                if line:
+                    cleaned_lines.append(line)
+            
+            if not cleaned_lines:
+                return None
+            
+            # Extract title - look for the first substantial line or common patterns
+            title = ''
+            for i, line in enumerate(cleaned_lines[:10]):  # Check first 10 lines
+                # Skip common PDF artifacts
+                if any(skip in line.lower() for skip in ['page', 'copyright', 'www.', 'http', 'recipe']):
+                    continue
+                # Look for title patterns
+                if len(line) > 3 and len(line) < 100 and not line.isdigit():
+                    title = line
+                    break
+            
+            if not title:
+                # Fallback: use first non-empty line
+                title = cleaned_lines[0] if cleaned_lines else "Imported Recipe"
+            
+            # Extract metadata using various patterns
+            category = default_category
+            servings = 4
+            cook_time = ''
+            prep_time = ''
+            difficulty = 'Medium'
+            description = ''
+            notes = ''
+            
+            # Look for metadata patterns
+            for line in cleaned_lines:
+                line_lower = line.lower()
+                
+                # Category detection
+                if any(cat in line_lower for cat in ['appetizer', 'main course', 'dessert', 'side dish', 'beverage']):
+                    for cat in ['appetizer', 'main course', 'dessert', 'side dish', 'beverage']:
+                        if cat in line_lower:
+                            category = cat.title()
+                            break
+                
+                # Servings detection
+                servings_match = re.search(r'(\d+)\s*(servings?|serves?|people)', line_lower)
+                if servings_match:
+                    try:
+                        servings = int(servings_match.group(1))
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Time detection
+                time_patterns = [
+                    r'cook(?:ing)?\s*time[:\s]*(\d+(?:\s*\d+)?\s*(?:min|minutes?|hr|hour|hours?))',
+                    r'total\s*time[:\s]*(\d+(?:\s*\d+)?\s*(?:min|minutes?|hr|hour|hours?))',
+                    r'prep(?:aration)?\s*time[:\s]*(\d+(?:\s*\d+)?\s*(?:min|minutes?|hr|hour|hours?))'
+                ]
+                
+                for pattern in time_patterns:
+                    match = re.search(pattern, line_lower)
+                    if match:
+                        time_value = match.group(1)
+                        if 'cook' in pattern or 'total' in pattern:
+                            cook_time = time_value
+                        elif 'prep' in pattern:
+                            prep_time = time_value
+                        break
+                
+                # Difficulty detection
+                if any(diff in line_lower for diff in ['easy', 'medium', 'hard', 'difficult', 'beginner', 'intermediate', 'advanced']):
+                    for diff in ['easy', 'medium', 'hard', 'difficult', 'beginner', 'intermediate', 'advanced']:
+                        if diff in line_lower:
+                            if diff in ['beginner']:
+                                difficulty = 'Easy'
+                            elif diff in ['intermediate']:
+                                difficulty = 'Medium'
+                            elif diff in ['advanced', 'difficult']:
+                                difficulty = 'Hard'
+                            else:
+                                difficulty = diff.title()
+                            break
+            
+            # Extract ingredients - look for common patterns
+            ingredients = []
+            in_ingredients = False
+            
+            ingredient_keywords = ['ingredients', 'ingredient list', 'you will need']
+            instruction_keywords = ['instructions', 'directions', 'steps', 'method', 'how to']
+            
+            for i, line in enumerate(cleaned_lines):
+                line_lower = line.lower()
+                
+                # Check if we're entering ingredients section
+                if any(keyword in line_lower for keyword in ingredient_keywords):
+                    in_ingredients = True
+                    continue
+                
+                # Check if we're entering instructions section
+                if any(keyword in line_lower for keyword in instruction_keywords):
+                    break
+                
+                # If we're in ingredients section, collect ingredient lines
+                if in_ingredients:
+                    # Skip empty lines and section headers
+                    if not line or line.startswith('#') or len(line) < 3:
+                        continue
+                    
+                    # Look for bullet points or numbered lists
+                    if re.match(r'^[\d\-\*\•]\s+', line):
+                        ingredient = re.sub(r'^[\d\-\*\•]\s+', '', line).strip()
+                        if ingredient:
+                            ingredients.append(ingredient)
+                    # Look for lines that seem like ingredients (contain measurements)
+                    elif re.search(r'\d+\s*(cup|cups|tbsp|tsp|oz|lb|pound|gram|g|ml|l|liter)', line_lower):
+                        ingredients.append(line)
+            
+            # If no ingredients found with section detection, try pattern matching
+            if not ingredients:
+                for line in cleaned_lines:
+                    # Look for lines with measurements
+                    if re.search(r'\d+\s*(cup|cups|tbsp|tsp|oz|lb|pound|gram|g|ml|l|liter)', line.lower()):
+                        ingredients.append(line)
+            
+            # Extract instructions - look for common patterns
+            instructions = []
+            in_instructions = False
+            
+            for i, line in enumerate(cleaned_lines):
+                line_lower = line.lower()
+                
+                # Check if we're entering instructions section
+                if any(keyword in line_lower for keyword in instruction_keywords):
+                    in_instructions = True
+                    continue
+                
+                # If we're in instructions section, collect instruction lines
+                if in_instructions:
+                    # Skip empty lines and section headers
+                    if not line or line.startswith('#') or len(line) < 3:
+                        continue
+                    
+                    # Look for numbered steps
+                    if re.match(r'^\d+[\.\)]\s+', line):
+                        instruction = re.sub(r'^\d+[\.\)]\s+', '', line).strip()
+                        if instruction:
+                            instructions.append(instruction)
+                    # Look for any substantial text
+                    elif len(line) > 10:
+                        instructions.append(line)
+            
+            # If no instructions found with section detection, try pattern matching
+            if not instructions:
+                # Look for numbered steps anywhere in the text
+                for line in cleaned_lines:
+                    if re.match(r'^\d+[\.\)]\s+', line) and len(line) > 10:
+                        instruction = re.sub(r'^\d+[\.\)]\s+', '', line).strip()
+                        if instruction:
+                            instructions.append(instruction)
+            
+            # Extract description from text before ingredients
+            description_lines = []
+            found_ingredients = False
+            
+            for line in cleaned_lines:
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in ingredient_keywords):
+                    found_ingredients = True
+                    break
+                if line and len(line) > 10 and not line.isdigit():
+                    description_lines.append(line)
+            
+            if description_lines:
+                description = ' '.join(description_lines[:3])  # Take first 3 lines
+            
+            return {
+                'title': title,
+                'category': category,
+                'servings': servings,
+                'cook_time': cook_time,
+                'prep_time': prep_time,
+                'difficulty': difficulty,
+                'description': description,
+                'notes': notes,
+                'ingredients': '\n'.join(ingredients),
+                'instructions': '\n'.join(instructions)
+            }
+            
+        except Exception as e:
+            print(f"Error parsing PDF recipe: {e}")
+            return None
+
+    
+    def import_from_word(self, file_path, duplicate_handling, default_category):
+        """Import recipes from Word document (.docx, .doc)"""
+        try:
+            from utils.db import get_connection
+            
+            # Extract text from Word document
+            word_text = self._extract_word_text(file_path)
+            
+            if not word_text:
+                QMessageBox.warning(self, "Word Error", "Could not extract text from Word document.")
+                return None
+            
+            # Parse the extracted text as a recipe
+            recipe_data = self._parse_word_recipe(word_text, default_category)
+            
+            if not recipe_data:
+                QMessageBox.warning(self, "Parse Error", "Could not parse recipe from Word document.")
+                return None
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Handle duplicates
+            if duplicate_handling == "Skip duplicates":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                if cursor.fetchone():
+                    QMessageBox.information(self, "Duplicate", f"Recipe '{recipe_data['title']}' already exists. Skipping.")
+                    conn.close()
+                    return None
+            elif duplicate_handling == "Update existing":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                existing = cursor.fetchone()
+                if existing:
+                    recipe_id = existing[0]
+                    # Update existing recipe
+                    cursor.execute("""
+                        UPDATE recipes 
+                        SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                            ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                        WHERE id = ?
+                    """, (
+                        recipe_data['category'], recipe_data['servings'], 
+                        recipe_data['cook_time'], recipe_data['prep_time'], 
+                        recipe_data['ingredients'], recipe_data['instructions'],
+                        recipe_data['notes'], recipe_data['difficulty'], 
+                        recipe_data['description'], recipe_id
+                    ))
+                    conn.commit()
+                    conn.close()
+                    QMessageBox.information(self, "Success", f"Updated recipe '{recipe_data['title']}'")
+                    return recipe_id
+            
+            # Insert new recipe
+            cursor.execute("""
+                INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                   ingredients, instructions, notes, difficulty, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                recipe_data['title'], recipe_data['category'], 
+                recipe_data['servings'], recipe_data['cook_time'],
+                recipe_data['prep_time'], recipe_data['ingredients'],
+                recipe_data['instructions'], recipe_data['notes'],
+                recipe_data['difficulty'], recipe_data['description']
+            ))
+            
+            recipe_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            QMessageBox.information(self, "Success", f"Imported recipe '{recipe_data['title']}' from Word document")
+            return recipe_id
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from Word document: {str(e)}")
+            return None
+
+    
+    def _extract_word_text(self, file_path):
+        """Extract text from Word document using multiple methods"""
+        import os
+        
+        try:
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            # Try python-docx for .docx files (modern format)
+            if file_ext == '.docx':
+                try:
+                    from docx import Document
+                    doc = Document(file_path)
+                    
+                    # Extract text from paragraphs
+                    text_parts = []
+                    for paragraph in doc.paragraphs:
+                        if paragraph.text.strip():
+                            text_parts.append(paragraph.text)
+                    
+                    # Extract text from tables (ingredients often in tables)
+                    for table in doc.tables:
+                        for row in table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    row_text.append(cell.text.strip())
+                            if row_text:
+                                text_parts.append(' | '.join(row_text))
+                    
+                    return '\n'.join(text_parts)
+                    
+                except ImportError:
+                    QMessageBox.critical(self, "Missing Dependency", 
+                                       "python-docx library is required for .docx import.\n"
+                                       "Please install it with: pip install python-docx")
+                    return None
+            
+            # Try textract for .doc files (older format) or as fallback
+            elif file_ext == '.doc':
+                try:
+                    import textract
+                    text = textract.process(file_path).decode('utf-8')
+                    return text
+                except ImportError:
+                    QMessageBox.critical(self, "Missing Dependency", 
+                                       "textract library is required for .doc import.\n"
+                                       "Please install it with: pip install textract\n"
+                                       "Note: .doc format support may require additional dependencies.")
+                    return None
+                except Exception as e:
+                    # Fallback: Try to open as .docx anyway (sometimes works)
+                    try:
+                        from docx import Document
+                        doc = Document(file_path)
+                        text_parts = []
+                        for paragraph in doc.paragraphs:
+                            if paragraph.text.strip():
+                                text_parts.append(paragraph.text)
+                        return '\n'.join(text_parts)
+                    except:
+                        QMessageBox.critical(self, "Format Error", 
+                                           f"Could not process .doc file: {str(e)}\n"
+                                           "Please convert to .docx format or install textract.")
+                        return None
+            else:
+                QMessageBox.warning(self, "Unsupported Format", 
+                                  f"File format {file_ext} is not supported.\n"
+                                  "Please use .docx or .doc format.")
+                return None
+                
+        except Exception as e:
+            print(f"Error extracting Word text: {e}")
+            return None
+
+    
+    def _parse_word_recipe(self, word_text, default_category):
+        """Parse recipe from extracted Word document text"""
+        import re
+        
+        try:
+            lines = word_text.split('\n')
+            
+            # Clean up the text - remove extra whitespace and normalize
+            cleaned_lines = []
+            for line in lines:
+                line = line.strip()
+                if line and line not in ['|', '||', '|||']:  # Remove table separators
+                    cleaned_lines.append(line)
+            
+            if not cleaned_lines:
+                return None
+            
+            # Extract title - look for the first substantial line
+            title = ''
+            for i, line in enumerate(cleaned_lines[:10]):  # Check first 10 lines
+                # Skip common document artifacts
+                if any(skip in line.lower() for skip in ['recipe', 'document', 'page', 'copyright']):
+                    if len(cleaned_lines) > i + 1:
+                        continue
+                # Look for title patterns - substantial text, not too long
+                if len(line) > 3 and len(line) < 100 and not line.isdigit():
+                    # Check if it's styled like a title (all caps, title case, etc.)
+                    title = line
+                    break
+            
+            if not title:
+                # Fallback: use first non-empty line
+                title = cleaned_lines[0] if cleaned_lines else "Imported Recipe"
+            
+            # Extract metadata using various patterns
+            category = default_category
+            servings = 4
+            cook_time = ''
+            prep_time = ''
+            difficulty = 'Medium'
+            description = ''
+            notes = ''
+            
+            # Look for metadata patterns (often in Word docs as "Label: Value")
+            for line in cleaned_lines:
+                line_lower = line.lower()
+                
+                # Category detection
+                if 'category:' in line_lower or 'type:' in line_lower or 'cuisine:' in line_lower:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        category = parts[1].strip()
+                elif any(cat in line_lower for cat in ['appetizer', 'main course', 'dessert', 'side dish', 'beverage', 'breakfast', 'lunch', 'dinner']):
+                    for cat in ['appetizer', 'main course', 'dessert', 'side dish', 'beverage', 'breakfast', 'lunch', 'dinner']:
+                        if cat in line_lower:
+                            category = cat.title()
+                            break
+                
+                # Servings detection
+                if 'servings:' in line_lower or 'serves:' in line_lower or 'yield:' in line_lower:
+                    servings_match = re.search(r'(\d+)', line)
+                    if servings_match:
+                        try:
+                            servings = int(servings_match.group(1))
+                        except (ValueError, TypeError):
+                            pass
+                else:
+                    servings_match = re.search(r'(\d+)\s*(servings?|serves?|people)', line_lower)
+                    if servings_match:
+                        try:
+                            servings = int(servings_match.group(1))
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Time detection
+                if 'cook time:' in line_lower or 'cooking time:' in line_lower:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        cook_time = parts[1].strip()
+                elif 'prep time:' in line_lower or 'preparation time:' in line_lower:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        prep_time = parts[1].strip()
+                elif 'total time:' in line_lower:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1 and not cook_time:
+                        cook_time = parts[1].strip()
+                
+                # Difficulty detection
+                if 'difficulty:' in line_lower or 'level:' in line_lower:
+                    parts = line.split(':', 1)
+                    if len(parts) > 1:
+                        difficulty = parts[1].strip().title()
+                elif any(diff in line_lower for diff in ['easy', 'medium', 'hard', 'beginner', 'intermediate', 'advanced']):
+                    for diff in ['easy', 'medium', 'hard', 'beginner', 'intermediate', 'advanced']:
+                        if diff in line_lower:
+                            if diff == 'beginner':
+                                difficulty = 'Easy'
+                            elif diff == 'intermediate':
+                                difficulty = 'Medium'
+                            elif diff in ['advanced', 'difficult']:
+                                difficulty = 'Hard'
+                            else:
+                                difficulty = diff.title()
+                            break
+            
+            # Extract ingredients - look for common patterns
+            ingredients = []
+            in_ingredients = False
+            
+            ingredient_keywords = ['ingredients', 'ingredient list', 'you will need', 'what you need']
+            instruction_keywords = ['instructions', 'directions', 'steps', 'method', 'how to make', 'preparation']
+            
+            for i, line in enumerate(cleaned_lines):
+                line_lower = line.lower()
+                
+                # Check if we're entering ingredients section
+                if any(keyword in line_lower for keyword in ingredient_keywords):
+                    in_ingredients = True
+                    continue
+                
+                # Check if we're entering instructions section
+                if any(keyword in line_lower for keyword in instruction_keywords):
+                    in_ingredients = False
+                    break
+                
+                # If we're in ingredients section, collect ingredient lines
+                if in_ingredients:
+                    # Skip empty lines and section headers
+                    if not line or len(line) < 2:
+                        continue
+                    
+                    # Handle table format (with | separator)
+                    if '|' in line:
+                        parts = line.split('|')
+                        # Combine amount and ingredient if in separate columns
+                        combined = ' '.join(p.strip() for p in parts if p.strip())
+                        if combined:
+                            ingredients.append(combined)
+                    # Look for bullet points or numbered lists
+                    elif re.match(r'^[\d\-\*\•·]\s+', line):
+                        ingredient = re.sub(r'^[\d\-\*\•·]\s+', '', line).strip()
+                        if ingredient:
+                            ingredients.append(ingredient)
+                    # Look for lines that seem like ingredients
+                    elif re.search(r'\d+\s*(cup|cups|tbsp|tsp|oz|lb|pound|gram|g|ml|l|liter|tablespoon|teaspoon)', line_lower) or len(line) < 60:
+                        ingredients.append(line)
+            
+            # If no ingredients found with section detection, try pattern matching
+            if not ingredients:
+                for line in cleaned_lines:
+                    # Look for lines with measurements
+                    if re.search(r'\d+\s*(cup|cups|tbsp|tsp|oz|lb|pound|gram|g|ml|l|liter|tablespoon|teaspoon)', line.lower()):
+                        ingredients.append(line)
+            
+            # Extract instructions - look for common patterns
+            instructions = []
+            in_instructions = False
+            
+            for i, line in enumerate(cleaned_lines):
+                line_lower = line.lower()
+                
+                # Check if we're entering instructions section
+                if any(keyword in line_lower for keyword in instruction_keywords):
+                    in_instructions = True
+                    continue
+                
+                # If we're in instructions section, collect instruction lines
+                if in_instructions:
+                    # Skip empty lines and very short lines
+                    if not line or len(line) < 5:
+                        continue
+                    
+                    # Skip lines that look like section headers
+                    if line.lower() in ['notes', 'tips', 'nutrition']:
+                        break
+                    
+                    # Look for numbered steps
+                    if re.match(r'^\d+[\.\)]\s+', line):
+                        instruction = re.sub(r'^\d+[\.\)]\s+', '', line).strip()
+                        if instruction:
+                            instructions.append(instruction)
+                    # Look for any substantial text
+                    elif len(line) > 15:
+                        instructions.append(line)
+            
+            # If no instructions found with section detection, try pattern matching
+            if not instructions:
+                # Look for numbered steps anywhere in the text
+                for line in cleaned_lines:
+                    if re.match(r'^\d+[\.\)]\s+', line) and len(line) > 15:
+                        instruction = re.sub(r'^\d+[\.\)]\s+', '', line).strip()
+                        if instruction:
+                            instructions.append(instruction)
+            
+            # Extract description from text before ingredients
+            description_lines = []
+            found_ingredients = False
+            
+            for line in cleaned_lines:
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in ingredient_keywords):
+                    found_ingredients = True
+                    break
+                if line and line != title and len(line) > 15 and not line.isdigit():
+                    # Skip metadata lines
+                    if ':' not in line or len(line) > 50:
+                        description_lines.append(line)
+            
+            if description_lines:
+                description = ' '.join(description_lines[:3])  # Take first 3 lines
+            
+            return {
+                'title': title,
+                'category': category,
+                'servings': servings,
+                'cook_time': cook_time,
+                'prep_time': prep_time,
+                'difficulty': difficulty,
+                'description': description,
+                'notes': notes,
+                'ingredients': '\n'.join(ingredients),
+                'instructions': '\n'.join(instructions)
+            }
+            
+        except Exception as e:
+            print(f"Error parsing Word recipe: {e}")
+            return None
+
+    
+    def _toggle_txt_input_mode(self, checked):
+        """Toggle between file selection and text input for TXT import"""
+        if checked:
+            self.text_input_label.setVisible(True)
+            self.recipe_text_input.setVisible(True)
+        else:
+            self.text_input_label.setVisible(False)
+            self.recipe_text_input.setVisible(False)
+    
+    def import_from_txt(self, file_path, duplicate_handling, default_category):
+        """Import recipe from text file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                recipe_text = file.read()
+            
+            self.import_from_txt_content(recipe_text, duplicate_handling, default_category)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import from text file: {str(e)}")
+    
+    def import_from_txt_content(self, recipe_text, duplicate_handling, default_category):
+        """Parse and import recipe from text content"""
+        from utils.db import get_connection
+        
+        try:
+            # Parse the recipe text
+            recipe_data = self._parse_recipe_text(recipe_text, default_category)
+            
+            if not recipe_data:
+                QMessageBox.warning(self, "Parse Error", "Could not parse recipe from text. Please check the format.")
+                return
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Handle duplicates
+            if duplicate_handling == "Skip duplicates":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                if cursor.fetchone():
+                    QMessageBox.information(self, "Duplicate", f"Recipe '{recipe_data['title']}' already exists. Skipping.")
+                    conn.close()
+                    return
+            elif duplicate_handling == "Update existing":
+                cursor.execute("SELECT id FROM recipes WHERE title = ?", (recipe_data['title'],))
+                existing = cursor.fetchone()
+                if existing:
+                    recipe_id = existing[0]
+                    # Update existing recipe
+                    cursor.execute("""
+                        UPDATE recipes 
+                        SET category = ?, servings = ?, cook_time = ?, prep_time = ?,
+                            ingredients = ?, instructions = ?, notes = ?, difficulty = ?, description = ?
+                        WHERE id = ?
+                    """, (
+                        recipe_data['category'], recipe_data['servings'], recipe_data['cook_time'],
+                        recipe_data['prep_time'], recipe_data['ingredients'], recipe_data['instructions'],
+                        recipe_data['notes'], recipe_data['difficulty'], recipe_data['description'], recipe_id
+                    ))
+                    conn.commit()
+                    conn.close()
+                    QMessageBox.information(self, "Success", f"Updated recipe '{recipe_data['title']}'")
+                    return recipe_id
+            
+            # Insert new recipe
+            cursor.execute("""
+                INSERT INTO recipes (title, category, servings, cook_time, prep_time,
+                                   ingredients, instructions, notes, difficulty, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                recipe_data['title'], recipe_data['category'], recipe_data['servings'],
+                recipe_data['cook_time'], recipe_data['prep_time'], recipe_data['ingredients'],
+                recipe_data['instructions'], recipe_data['notes'], recipe_data['difficulty'],
+                recipe_data['description']
+            ))
+            
+            recipe_id = cursor.lastrowid
+            
+            # Insert ingredients into recipe_ingredients table if we have structured data
+            if recipe_data.get('parsed_ingredients'):
+                for ingredient in recipe_data['parsed_ingredients']:
+                    cursor.execute("""
+                        INSERT INTO recipe_ingredients (recipe_id, ingredient_name, quantity, unit, notes)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        recipe_id,
+                        ingredient.get('name', ''),
+                        ingredient.get('quantity', ''),
+                        ingredient.get('unit', ''),
+                        ingredient.get('notes', '')
+                    ))
+            
+            conn.commit()
+            conn.close()
+            
+            QMessageBox.information(self, "Success", f"Imported recipe '{recipe_data['title']}'")
+            
+            # Return the recipe ID for auto-viewing
+            return recipe_id
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import recipe: {str(e)}")
+            return None
+    
+    def _parse_recipe_text(self, text, default_category):
+        """Parse recipe from text content
+        
+        Supports formats like:
+        - Recipe Name: ...
+        - Category: ...
+        - Ingredients: (or Ingredients list)
+        - Instructions: (or Directions:, Steps:, Method:)
+        """
+        import re
+        
+        recipe_data = {
+            'title': '',
+            'category': default_category,
+            'prep_time': '',
+            'cook_time': '',
+            'servings': 4,
+            'difficulty': 'Medium',
+            'description': '',
+            'ingredients': '',
+            'instructions': '',
+            'notes': '',
+            'parsed_ingredients': []
+        }
+        
+        # Split text into lines
+        lines = text.split('\n')
+        current_section = None
+        section_content = []
+        
+        # Patterns to match common recipe field names
+        field_patterns = {
+            'title': r'^(?:recipe\s+name|title|name)\s*[:=]\s*(.+)$',
+            'category': r'^(?:category|type)\s*[:=]\s*(.+)$',
+            'prep_time': r'^(?:prep\s+time|preparation\s+time|prep)\s*[:=]\s*(.+)$',
+            'cook_time': r'^(?:cook\s+time|cooking\s+time|cook)\s*[:=]\s*(.+)$',
+            'servings': r'^(?:servings|serves|yield)\s*[:=]\s*(\d+)',
+            'difficulty': r'^(?:difficulty|level)\s*[:=]\s*(.+)$',
+            'description': r'^(?:description|about)\s*[:=]\s*(.+)$',
+        }
+        
+        section_patterns = {
+            'ingredients': r'^(?:ingredients|ingredient\s+list)\s*[:=]?\s*$',
+            'instructions': r'^(?:instructions|directions|steps|method|preparation)\s*[:=]?\s*$',
+            'notes': r'^(?:notes|tips|note)\s*[:=]?\s*$',
+        }
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            if not line_stripped:
+                # Empty line - might be section separator
+                if section_content and current_section:
+                    # Save accumulated section content
+                    if current_section in ['ingredients', 'instructions', 'notes']:
+                        recipe_data[current_section] = '\n'.join(section_content).strip()
+                    section_content = []
+                continue
+            
+            # Check for field patterns (single-line fields)
+            matched_field = False
+            for field_name, pattern in field_patterns.items():
+                match = re.match(pattern, line_stripped, re.IGNORECASE)
+                if match:
+                    value = match.group(1).strip()
+                    if field_name == 'servings':
+                        try:
+                            recipe_data[field_name] = int(value)
+                        except ValueError:
+                            recipe_data[field_name] = 4
+                    else:
+                        recipe_data[field_name] = value
+                    matched_field = True
+                    break
+            
+            if matched_field:
+                continue
+            
+            # Check for section headers
+            matched_section = False
+            for section_name, pattern in section_patterns.items():
+                if re.match(pattern, line_stripped, re.IGNORECASE):
+                    # Save previous section if any
+                    if section_content and current_section:
+                        recipe_data[current_section] = '\n'.join(section_content).strip()
+                    
+                    # Start new section
+                    current_section = section_name
+                    section_content = []
+                    matched_section = True
+                    break
+            
+            if matched_section:
+                continue
+            
+            # Add line to current section
+            if current_section:
+                section_content.append(line_stripped)
+            elif not recipe_data['title']:
+                # If no title set yet and we have content, assume first line is title
+                recipe_data['title'] = line_stripped
+        
+        # Save last section
+        if section_content and current_section:
+            recipe_data[current_section] = '\n'.join(section_content).strip()
+        
+        # Parse ingredients into structured format
+        if recipe_data['ingredients']:
+            recipe_data['parsed_ingredients'] = self._parse_ingredients_list(recipe_data['ingredients'])
+        
+        # Validate required fields
+        if not recipe_data['title']:
+            # Try to extract title from first non-empty line
+            for line in lines:
+                if line.strip():
+                    recipe_data['title'] = line.strip()[:100]  # Limit title length
+                    break
+        
+        return recipe_data if recipe_data['title'] else None
+    
+    def _parse_ingredients_list(self, ingredients_text):
+        """Parse ingredients text into structured list"""
+        import re
+        
+        parsed_ingredients = []
+        lines = ingredients_text.split('\n')
+        
+        # Common measurement patterns
+        measurement_pattern = r'^[\-\*\•]?\s*(\d+[\d\s\/\.]*)\s*([a-zA-Z]+)?\s+(.+)$'
+        simple_pattern = r'^[\-\*\•]?\s*(.+)$'
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Try to match quantity + unit + ingredient
+            match = re.match(measurement_pattern, line)
+            if match:
+                quantity = match.group(1).strip()
+                unit = match.group(2).strip() if match.group(2) else ''
+                name = match.group(3).strip()
+                
+                parsed_ingredients.append({
+                    'quantity': quantity,
+                    'unit': unit,
+                    'name': name,
+                    'notes': ''
+                })
+            else:
+                # Just ingredient name, no measurement
+                match = re.match(simple_pattern, line)
+                if match:
+                    parsed_ingredients.append({
+                        'quantity': '',
+                        'unit': '',
+                        'name': match.group(1).strip(),
+                        'notes': ''
+                    })
+        
+        return parsed_ingredients

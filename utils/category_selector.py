@@ -15,9 +15,12 @@ from PySide6.QtGui import QFont, QPalette
 class CategoryButton(QPushButton):
     """Custom category button with enhanced styling"""
     
-    def __init__(self, text: str, category_id: str = None, parent=None):
+    def __init__(self, text: str, category_id = None, parent=None):
+        # Ensure parent is None or a QWidget
+        if parent is not None and not isinstance(parent, QWidget):
+            parent = None
         super().__init__(text, parent)
-        self.category_id = category_id or text.lower()
+        self.category_id = str(category_id) if category_id is not None else text.lower()
         self.setup_styling()
     
     def setup_styling(self):
@@ -134,13 +137,14 @@ class CategorySelector(QWidget):
         
         # Add new buttons
         for name, category_id in categories:
-            button = CategoryButton(name, category_id)
-            button.clicked.connect(lambda checked, cid=category_id, cname=name: 
+            # Ensure name is a string and category_id is converted to string
+            button = CategoryButton(str(name), str(category_id))
+            button.clicked.connect(lambda checked, cid=str(category_id), cname=str(name): 
                                  self._on_category_selected(cid, cname))
             
             self.button_group.addButton(button)
             self.button_layout.insertWidget(self.button_layout.count() - 1, button)
-            self.buttons[category_id] = button
+            self.buttons[str(category_id)] = button
         
         # Select "All" by default
         if "all" in self.buttons:
@@ -157,8 +161,9 @@ class CategorySelector(QWidget):
             return checked_button.category_id, checked_button.text()
         return "all", "All"
     
-    def set_selected_category(self, category_id: str):
+    def set_selected_category(self, category_id):
         """Set the selected category by ID"""
+        category_id = str(category_id)
         if category_id in self.buttons:
             self.buttons[category_id].setChecked(True)
     

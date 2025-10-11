@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Guide Panel for Celiogix Application
+Guide Panel for CeliacShield Application
 Provides documentation and links for celiac disease management
 """
 
@@ -34,7 +34,7 @@ class GuidePanel(GuideContextMenuMixin, BasePanel):
         main_layout.setSpacing(15)
         
         # Title
-        title_label = QLabel("Celiogix User Guide & Celiac Resources")
+        title_label = QLabel("CeliacShield User Guide & Celiac Resources")
         title_font = QFont()
         title_font.setPointSize(18)
         title_font.setBold(True)
@@ -61,7 +61,7 @@ class GuidePanel(GuideContextMenuMixin, BasePanel):
         app_features_text.setReadOnly(True)
         app_features_text.setMaximumHeight(200)
         app_features_text.setHtml("""
-        <h3>Getting Started with Celiogix</h3>
+        <h3>Getting Started with CeliacShield</h3>
         <p><b>Cookbook Panel:</b> Manage your gluten-free recipes, import from web, scale ingredients, and track nutrition.</p>
         <p><b>Pantry Panel:</b> Track your gluten-free inventory, scan UPC codes for gluten safety, and monitor expiration dates.</p>
         <p><b>Shopping List:</b> Create organized shopping lists by store and category, with gluten-free item tracking.</p>
@@ -144,7 +144,7 @@ class GuidePanel(GuideContextMenuMixin, BasePanel):
         splitter.setSizes([400, 400])  # Equal sizes
         
         # Footer
-        footer_label = QLabel("💚 Celiogix - Your Celiac Disease Management Companion")
+        footer_label = QLabel("💚 CeliacShield - Your Celiac Disease Management Companion")
         footer_label.setAlignment(Qt.AlignCenter)
         footer_label.setStyleSheet("color: #2e7d32; font-style: italic; margin: 10px;")
         main_layout.addWidget(footer_label)

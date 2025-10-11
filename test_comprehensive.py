@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive test script for the refactored Celiogix application
+Comprehensive test script for the refactored CeliacShield application
 
 This script performs thorough testing of all components and functionality.
 """
@@ -254,14 +254,14 @@ def test_panel_switching(window):
 
 def main():
     """Run all tests"""
-    print("Comprehensive Celiogix Application Tests")
+    print("Comprehensive CeliacShield Application Tests")
     print("=" * 60)
     
     # Create single QApplication instance
     app = QApplication(sys.argv)
-    app.setApplicationName("Celiogix - Test")
+    app.setApplicationName("CeliacShield - Test")
     app.setApplicationVersion("1.0")
-    app.setOrganizationName("Celiogix")
+    app.setOrganizationName("CeliacShield")
     
     # Run all tests with shared window
     passed = 0

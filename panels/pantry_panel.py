@@ -12,8 +12,10 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QGroupBox, QDateEdit,
     QMessageBox, QSplitter, QFrame, QDialog
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QUrl
 from PySide6.QtGui import QFont
+from utils.accessibility import announce_for_screen_reader
+import requests
 
 from panels.base_panel import BasePanel
 from panels.context_menu_mixin import PantryContextMenuMixin
@@ -453,6 +455,7 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
         self.notes_edit.clear()
     
     def filter_items(self):
+
         """Filter items based on search text"""
         search_text = self.search_edit.text().lower()
         
@@ -474,17 +477,39 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
         """Scan UPC code and check for gluten safety"""
         upc_code = self.upc_input.text().strip()
         if not upc_code:
+
             QMessageBox.warning(self, "No UPC", "Please enter a UPC code to scan.")
             return
 
+        def ocr_fallback():
+            """Attempt OCR if UPC is not directly entered"""
+            try:
+                from services.ocr_service import OCRService  # Delayed import
+                ocr_service = OCRService()
+                image_path = ocr_service.select_image(self) #Opens a File Dialog
+                if image_path:
+                    extracted_text = ocr_service.extract_text_from_image(image_path)
+                    if extracted_text:
+                        upc_codes = ocr_service.find_upc_codes(extracted_text)
+                        if upc_codes:
+                            self.upc_input.setText(upc_codes[0])
+                            self.scan_upc()
+                        else:
+                            QMessageBox.warning(self, "OCR Result", "No UPC codes found in image.")
+                else:
+                    QMessageBox.information(self, "OCR Canceled", "OCR operation cancelled.")
+            except Exception as e:
+                QMessageBox.critical(self, "OCR Error", f"OCR process failed: {str(e)}")
+
         try:
-            from services.upc_scanner import upc_scanner
+            #from services.upc_scanner import upc_scanner
+
             
             # Show progress dialog
             progress_dialog = QMessageBox(self)
             progress_dialog.setWindowTitle("Scanning UPC")
             progress_dialog.setText(f"Scanning UPC: {upc_code}\n\nChecking gluten safety...")
-            progress_dialog.setStandardButtons(QMessageBox.Cancel)
+            progress_dialog.setStandardButtons(QMessageBox.StandardButton.Cancel)
             progress_dialog.setModal(False)  # Make it non-modal so it can be closed
             progress_dialog.buttonClicked.connect(lambda: self._close_progress_dialog(progress_dialog))
             progress_dialog.show()
@@ -492,19 +517,23 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
             # Process events to ensure dialog is visible
             from PySide6.QtWidgets import QApplication
             from PySide6.QtCore import QTimer
+
             QApplication.processEvents()
             
             # Set up a timeout timer to close the dialog if it gets stuck
             timeout_timer = QTimer()
             timeout_timer.setSingleShot(True)
             timeout_timer.timeout.connect(lambda: self._close_progress_dialog(progress_dialog))
+
             timeout_timer.start(10000)  # 10 second timeout
             
             try:
+
                 # Scan the UPC code
-                product_info = upc_scanner.scan_upc(upc_code)
-                
+                #product_info = upc_scanner.scan_upc(upc_code)
+                product_info = self.scan_upc_from_openfoodfacts(upc_code)
                 # Stop the timeout timer
+
                 timeout_timer.stop()
                 
                 # Close progress dialog first
@@ -516,26 +545,81 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
                 else:
                     QMessageBox.warning(self, "Product Not Found", 
                         f"Could not find information for UPC: {upc_code}\n\n"
-                        "This product may not be in our database or the UPC code may be invalid.")
+                    "This product may not be in our database or the UPC code may be invalid.")
                     
             except Exception as scan_error:
                 # Ensure progress dialog is closed even on error
                 self._close_progress_dialog(progress_dialog)
                 raise scan_error
                 
-        except ImportError:
+        except Exception as e:
             # Fallback when scanner service is not available
+
             self._fallback_upc_scan(upc_code)
         except Exception as e:
             # Ensure any progress dialog is closed
             try:
                 if 'progress_dialog' in locals():
                     self._close_progress_dialog(progress_dialog)
-            except:
-                pass
+            except Exception:
+                pass    
+        finally:
+            timeout_timer.stop()
+            if not self.upc_input.text().strip():
+                ocr_fallback() #Run OCR if no code is present
+            announce_for_screen_reader("UPC scan process complete.")
+
+    def scan_upc_from_openfoodfacts(self, upc_code: str) -> Optional[Dict[str, Any]]:
+        """Scan UPC code using Open Food Facts API"""
+        try:
+            # Open Food Facts API endpoint
+            api_url = f"https://world.openfoodfacts.org/api/v0/product/{upc_code}.json"
+            
+            # Make API request
+            response = requests.get(api_url)
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            
+            # Parse JSON response
+            product_data = response.json()
+            
+            if product_data['status'] == 1:
+
+                # Extract product information
+                product = product_data['product']
+                product_name = product.get('product_name', 'N/A')
+                brands = product.get('brands', 'N/A')
+                categories = product.get('categories', 'N/A')
+                ingredients = product.get('ingredients_text', 'N/A')
+                
+                # Determine gluten-free status (simplified)
+                gluten_free = "gluten-free" in categories.lower() or "no gluten" in ingredients.lower()
+                
+
+                # Return product information
+                return {
+                    "name": product_name,
+                    "brand": brands,
+                    "category": categories,
+                    "ingredients": ingredients,
+                    "gluten_free": gluten_free,
+                    "upc": upc_code
+                }
+            else:
+                # Product not found
+
+                QMessageBox.information(self, "Product Not Found", "Product not found in Open Food Facts database.")
+                return None
+        
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP error: {e}")
+            QMessageBox.critical(self, "HTTP Error", f"Failed to retrieve product information. HTTP Error: {e}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"API request failed: {e}")
             QMessageBox.critical(self, "Scan Error", f"Failed to scan UPC: {str(e)}")
     
     def _close_progress_dialog(self, dialog):
+
         """Safely close progress dialog"""
         if dialog:
             try:
@@ -604,6 +688,7 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
         else:
             safety_status = QLabel("❓ <b>UNKNOWN</b> - Gluten-free status cannot be determined")
             safety_status.setStyleSheet("color: orange; font-size: 14px; padding: 10px; background-color: #fff3e0; border-radius: 5px;")
+
         
         safety_layout.addWidget(safety_status)
         
@@ -1114,7 +1199,7 @@ class PantryPanel(PantryContextMenuMixin, BasePanel):
             # Get form data
             name = self.name_edit.text().strip()
             category = self.category_combo.currentText()
-            quantity = self.quantity_spin.value()
+            quantity = int(self.quantity_spin.value())
             unit = self.unit_edit.text().strip()
             expiry_date = self.expiry_date_edit.date().toString("yyyy-MM-dd") if self.expiry_date_edit.date().isValid() else None
             is_gluten_free = self.gluten_free_combo.currentText() == "Yes"

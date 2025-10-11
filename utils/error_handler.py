@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Error handling utilities for Celiogix application
+Error handling utilities for CeliacShield application
 
 Provides centralized error handling, logging, and user notification.
 """

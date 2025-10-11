@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Menu Manager for Celiogix Application
+Menu Manager for CeliacShield Application
 
 Handles menu bar setup, styling, and navigation management.
 """
@@ -27,6 +27,8 @@ class MenuManager:
         self.main_window = main_window
         self.menu_bar = None
         self.menu_widget = None
+        self.menu_buttons = []  # Track menu buttons for styling
+        self.active_button_index = 0  # Track active button
         
         # Menu configuration
         self.menu_items = [
@@ -77,7 +79,7 @@ class MenuManager:
         
         # About action
         about_action = QAction('&About', self.main_window)
-        about_action.setStatusTip('About Celiogix')
+        about_action.setStatusTip('About CeliacShield')
         about_action.triggered.connect(self.main_window.show_about)
         options_menu.addAction(about_action)
         
@@ -108,8 +110,10 @@ class MenuManager:
         menu_layout.addItem(left_spacer)
         
         # Create menu buttons
+        self.menu_buttons = []  # Reset buttons list
         for text, shortcut, panel_index in self.menu_items:
             btn = self._create_menu_button(text, panel_index)
+            self.menu_buttons.append(btn)
             menu_layout.addWidget(btn)
         
         # Add Options button
@@ -121,6 +125,10 @@ class MenuManager:
         menu_layout.addItem(right_spacer)
         
         self.menu_widget = menu_widget
+        
+        # Set initial active button (Cookbook)
+        self.set_active_button(0)
+        
         return menu_widget
     
     def _create_menu_button(self, text: str, panel_index: int) -> QPushButton:
@@ -129,9 +137,29 @@ class MenuManager:
         display_text = text.replace("&", "")
         
         btn = QPushButton(display_text)
+        btn.setCheckable(True)  # Make it checkable for active state
         btn.setStyleSheet(self._get_menu_button_style())
-        btn.clicked.connect(lambda: self.main_window.switch_to_panel(panel_index))
+        btn.clicked.connect(lambda: self._on_menu_button_clicked(panel_index))
         return btn
+    
+    def _on_menu_button_clicked(self, panel_index: int):
+        """Handle menu button click"""
+        self.set_active_button(panel_index)
+        self.main_window.switch_to_panel(panel_index)
+    
+    def set_active_button(self, panel_index: int):
+        """Set the active menu button"""
+        # Update active button index
+        self.active_button_index = panel_index
+        
+        # Update button states
+        for i, btn in enumerate(self.menu_buttons):
+            if i == panel_index:
+                btn.setChecked(True)
+                btn.setStyleSheet(self._get_active_menu_button_style())
+            else:
+                btn.setChecked(False)
+                btn.setStyleSheet(self._get_menu_button_style())
     
     def _create_options_button(self) -> QPushButton:
         """Create the Options button"""
@@ -158,6 +186,29 @@ class MenuManager:
             }
             QPushButton:pressed {
                 background-color: #66bb6a;
+                color: #ffffff;
+            }
+        """
+    
+    def _get_active_menu_button_style(self) -> str:
+        """Get the CSS style for active menu buttons"""
+        return """
+            QPushButton {
+                background-color: #4caf50;
+                color: #ffffff;
+                border: none;
+                padding: 8px 12px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 11px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #66bb6a;
+                color: #ffffff;
+            }
+            QPushButton:pressed {
+                background-color: #388e3c;
                 color: #ffffff;
             }
         """

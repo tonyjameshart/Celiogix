@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-UI Manager for Celiogix Application
+UI Manager for CeliacShield Application
 
 Handles UI setup, styling, and component management for the main window.
 """
@@ -40,6 +40,10 @@ class UIManager:
             ("Calendar", 5),
             ("Guide", 6),
         ]
+        
+        # Track active navigation button
+        self.active_nav_button = None
+        self.nav_button_widgets = {}
     
     def setup_main_ui(self) -> QWidget:
         """
@@ -73,7 +77,7 @@ class UIManager:
     
     def _create_title_label(self) -> QLabel:
         """Create and configure the title label"""
-        title_label = QLabel("Celiac Management")
+        title_label = QLabel("Celiac Shield")
         
         # Configure font
         title_font = QFont()
@@ -99,6 +103,7 @@ class UIManager:
         for text, panel_index in self.nav_buttons:
             btn = self._create_nav_button(text, panel_index)
             nav_layout.addWidget(btn)
+            self.nav_button_widgets[panel_index] = btn
         
         # Add Options button
         options_btn = self._create_options_button()
@@ -124,29 +129,53 @@ class UIManager:
         options_btn.clicked.connect(self.main_window.show_settings)
         return options_btn
     
-    def _get_nav_button_style(self) -> str:
-        """Get the CSS style for navigation buttons"""
-        return """
-            QPushButton {
+    def _get_nav_button_style(self, theme_colors: Optional[Dict[str, str]] = None) -> str:
+        """Get the CSS style for navigation buttons with theme support"""
+        if theme_colors:
+            # Use theme colors
+            primary = theme_colors.get('primary', '#1b5e20')
+            primary_light = theme_colors.get('primary_light', '#e8f5e8')
+            primary_dark = theme_colors.get('primary_dark', '#2e7d32')
+            border_color = theme_colors.get('border_color', theme_colors.get('border', '#c8e6c9'))
+            text_primary = theme_colors.get('text_primary', '#212121')
+            text_on_primary = theme_colors.get('text_on_primary', '#ffffff')
+        else:
+            # Fallback to default green theme
+            primary = '#1b5e20'
+            primary_light = '#e8f5e8'
+            primary_dark = '#2e7d32'
+            border_color = '#c8e6c9'
+            text_primary = '#1b5e20'
+            text_on_primary = '#ffffff'
+        
+        return f"""
+            QPushButton {{
                 background-color: transparent;
-                color: #1b5e20;
-                border: 1px solid #c8e6c9;
+                color: {text_primary};
+                border: 1px solid {border_color};
                 padding: 8px 15px;
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 11px;
                 border-radius: 4px;
                 min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #e8f5e8;
-                color: #1b5e20;
-                border-color: #66bb6a;
-            }
-            QPushButton:pressed {
-                background-color: #66bb6a;
-                color: #ffffff;
-                border-color: #1b5e20;
-            }
+                font-weight: normal;
+            }}
+            QPushButton:hover {{
+                background-color: {primary_light};
+                color: {text_primary};
+                border-color: {primary};
+            }}
+            QPushButton:pressed {{
+                background-color: {primary};
+                color: {text_on_primary};
+                border-color: {primary_dark};
+            }}
+            QPushButton[active="true"] {{
+                background-color: {primary};
+                color: {text_on_primary};
+                border-color: {primary_dark};
+                font-weight: bold;
+            }}
         """
     
     def _create_tab_widget(self) -> QTabWidget:
@@ -186,6 +215,7 @@ class UIManager:
         """Switch to a specific tab"""
         if self.tab_widget and 0 <= index < self.tab_widget.count():
             self.tab_widget.setCurrentIndex(index)
+            self.set_active_nav_button(index)
     
     def get_current_tab_index(self) -> int:
         """Get the current tab index"""
@@ -224,6 +254,16 @@ class UIManager:
                 }}
             """
             self.nav_widget.setStyleSheet(nav_style)
+            
+            # Update all navigation button styles with theme colors
+            button_style = self._get_nav_button_style(theme_colors)
+            for btn in self.nav_button_widgets.values():
+                btn.setStyleSheet(button_style)
+                # Re-apply active state if needed
+                if btn.property("active"):
+                    btn.style().unpolish(btn)
+                    btn.style().polish(btn)
+                    
         except Exception as e:
             handle_error(
                 e,
@@ -288,3 +328,29 @@ class UIManager:
     def get_status_bar(self) -> Optional[QStatusBar]:
         """Get the status bar"""
         return self.status_bar
+    
+    def set_active_nav_button(self, panel_index: int):
+        """
+        Set the active navigation button
+        
+        Args:
+            panel_index: Index of the panel to make active
+        """
+        # Remove active state from current button
+        if self.active_nav_button is not None and self.active_nav_button in self.nav_button_widgets:
+            current_btn = self.nav_button_widgets[self.active_nav_button]
+            current_btn.setProperty("active", False)
+            current_btn.style().unpolish(current_btn)
+            current_btn.style().polish(current_btn)
+        
+        # Set new active button
+        if panel_index in self.nav_button_widgets:
+            active_btn = self.nav_button_widgets[panel_index]
+            active_btn.setProperty("active", True)
+            active_btn.style().unpolish(active_btn)
+            active_btn.style().polish(active_btn)
+            self.active_nav_button = panel_index
+    
+    def get_active_nav_button(self) -> Optional[int]:
+        """Get the currently active navigation button index"""
+        return self.active_nav_button

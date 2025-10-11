@@ -15,8 +15,8 @@ from PySide6.QtCore import Qt
 class RecipeDialogs:
     """Dialog boxes for recipe operations"""
     
-    def __init__(self):
-        pass
+    def __init__(self, cookbook_panel_instance=None):
+        self.cookbook_panel = cookbook_panel_instance
     
     def show_add_recipe_dialog(self) -> Optional[Dict[str, Any]]:
         """Show dialog to add a new recipe"""
@@ -158,15 +158,26 @@ class RecipeDialogs:
         scroll_area.setWidgetResizable(True)
         layout.addWidget(scroll_area)
         
-        # Close button
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        convert_btn = QPushButton("Convert to GF")
+        convert_btn.clicked.connect(lambda: self.handle_gf_conversion(recipe_data, dialog))
+        button_layout.addWidget(convert_btn)
+
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dialog.accept)
-        close_btn_layout = QHBoxLayout()
-        close_btn_layout.addStretch()
-        close_btn_layout.addWidget(close_btn)
-        layout.addLayout(close_btn_layout)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
         
         dialog.exec()
+
+    def handle_gf_conversion(self, recipe_data, parent_dialog):
+        if self.cookbook_panel:
+            self.cookbook_panel.handle_gf_conversion_request(recipe_data)
+            parent_dialog.accept() # Close the view dialog after conversion
     
     def confirm_delete_recipe(self) -> bool:
         """Show confirmation dialog for recipe deletion"""

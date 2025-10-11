@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Manager for Celiogix Application
+Database Manager for CeliacShield Application
 
 Handles database initialization, connections, and schema management.
 """

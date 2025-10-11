@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Demo script for Celiogix Mobile Companion Integration
+Demo script for CeliacShield Mobile Companion Integration
 Shows the mobile companion features and desktop command center
 """
 
@@ -23,7 +23,7 @@ class MobileCompanionDemo(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🌍 Celiogix Mobile Companion Ecosystem - Demo")
+        self.setWindowTitle("🌍 CeliacShield Mobile Companion Ecosystem - Demo")
         self.setGeometry(100, 100, 1400, 900)
         
         # Initialize mobile companion integration
@@ -40,7 +40,7 @@ class MobileCompanionDemo(QMainWindow):
         layout = QVBoxLayout(central_widget)
         
         # Header
-        header_label = QLabel("🌍 Celiogix Mobile Companion Ecosystem")
+        header_label = QLabel("🌍 CeliacShield Mobile Companion Ecosystem")
         header_label.setStyleSheet("""
             QLabel {
                 font-size: 24px;
@@ -398,7 +398,7 @@ def main():
     app = QApplication(sys.argv)
     
     # Set application properties
-    app.setApplicationName("Celiogix Mobile Companion Demo")
+    app.setApplicationName("CeliacShield Mobile Companion Demo")
     app.setApplicationVersion("1.0.0")
     
     # Create and show demo window

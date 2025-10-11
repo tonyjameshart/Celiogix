@@ -1,8 +1,8 @@
-# Celiogix - Refactored Architecture
+# CeliacShield - Refactored Architecture
 
 ## Overview
 
-Celiogix is a comprehensive application for managing celiac disease, including pantry management, health logging, recipe management, shopping lists, menu planning, calendar integration, and data import/export capabilities.
+CeliacShield is a comprehensive application for managing celiac disease, including pantry management, health logging, recipe management, shopping lists, menu planning, calendar integration, and data import/export capabilities.
 
 This version uses a refactored architecture that separates concerns into specialized manager classes, improving maintainability, testability, and code organization.
 
@@ -40,7 +40,7 @@ The refactored application uses a manager-based architecture:
 ### Project Structure
 
 ```
-celiogix/
+celiacshield/
 ├── core/                  # Core manager classes
 │   ├── __init__.py
 │   ├── database_manager.py

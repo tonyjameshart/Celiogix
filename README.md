@@ -1,2 +1,2 @@
-# Celiogix
+# CeliacShield
 

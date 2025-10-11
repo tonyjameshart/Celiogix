@@ -22,6 +22,9 @@ from panels.calendar_panel import CalendarPanel
 from panels.guide_panel import GuidePanel
 from panels.settings_panel import SettingsPanel
 
+# Import sync manager
+from core.sync_manager import SyncManager
+
 # Import theme engine
 try:
     from services.theme_engine_pyside6 import apply_modern_theme
@@ -41,12 +44,17 @@ class MainWindow(QMainWindow):
         self.status_var = "Initializing..."
         
         # Set window properties
-        self.setWindowTitle("Celiogix")
+        self.setWindowTitle("CeliacShield")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(800, 600)
         
         # Initialize database
         self.init_database()
+        
+        # Initialize Bluetooth sync
+        self.sync_manager = SyncManager()
+        self.sync_manager.sync_status_changed.connect(self._handle_sync_update)
+        self.sync_manager.start_bluetooth_sync()
         
         # Set up UI with centered title and navigation menu
         self.setup_ui()
@@ -299,24 +307,54 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Centered title
-        title_label = QLabel("Celiac Management")
-        title_font = QFont()
-        title_font.setPointSize(20)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
+        # Centered title with improved styling
+        title_label = QLabel("CeliacShield Management")
+        from core.ui_polish import UIPolish
+        title_label.setFont(UIPolish.get_title_font())
         title_label.setAlignment(Qt.AlignCenter)
-        # Store reference to title label for theme updates
+        title_label.setStyleSheet("""
+            QLabel {
+                color: #1b5e20;
+                margin: 20px;
+                padding: 16px;
+                background-color: rgba(241, 248, 233, 0.8);
+                border-radius: 8px;
+            }
+        """)
         self.title_label = title_label
         main_layout.addWidget(title_label)
         
         # Create centered navigation menu below title
         self.create_centered_navigation_menu(main_layout)
         
-        # Tab widget
+        # Tab widget with improved styling
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabPosition(QTabWidget.North)
         self.tab_widget.setMovable(True)
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #c8e6c9;
+                border-radius: 8px;
+                background-color: #fafafa;
+                margin-top: 4px;
+            }
+            QTabBar::tab {
+                background-color: #e8f5e8;
+                color: #2e7d32;
+                padding: 12px 20px;
+                margin-right: 2px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                font-weight: 500;
+            }
+            QTabBar::tab:selected {
+                background-color: #ffffff;
+                border-bottom: 2px solid #4caf50;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #f1f8e9;
+            }
+        """)
         main_layout.addWidget(self.tab_widget)
 
     def create_centered_navigation_menu(self, main_layout):
@@ -349,22 +387,24 @@ class MainWindow(QMainWindow):
                 btn = QPushButton(text)
                 btn.setStyleSheet("""
                     QPushButton {
-                        background-color: transparent;
-                        color: #1b5e20;
-                        border: 1px solid #c8e6c9;
-                        padding: 8px 15px;
+                        background-color: #ffffff;
+                        color: #2e7d32;
+                        border: 2px solid #c8e6c9;
+                        padding: 10px 18px;
                         font-family: 'Segoe UI', sans-serif;
                         font-size: 11px;
-                        border-radius: 4px;
-                        min-width: 80px;
+                        font-weight: 500;
+                        border-radius: 6px;
+                        min-width: 90px;
+                        min-height: 36px;
                     }
                     QPushButton:hover {
                         background-color: #e8f5e8;
-                        color: #1b5e20;
-                        border-color: #66bb6a;
+                        border-color: #4caf50;
+                        transform: translateY(-1px);
                     }
                     QPushButton:pressed {
-                        background-color: #66bb6a;
+                        background-color: #2e7d32;
                         color: #ffffff;
                         border-color: #1b5e20;
                     }
@@ -372,28 +412,28 @@ class MainWindow(QMainWindow):
                 btn.clicked.connect(callback)
                 nav_layout.addWidget(btn)
             
-            # Add Options button
-            options_btn = QPushButton("Options")
+            # Add Options button with distinct styling
+            options_btn = QPushButton("⚙ Options")
             options_btn.setStyleSheet("""
                 QPushButton {
-                    background-color: transparent;
-                    color: #1b5e20;
-                    border: 1px solid #c8e6c9;
-                    padding: 8px 15px;
+                    background-color: #f5f5f5;
+                    color: #424242;
+                    border: 2px solid #bdbdbd;
+                    padding: 10px 18px;
                     font-family: 'Segoe UI', sans-serif;
                     font-size: 11px;
-                    border-radius: 4px;
-                    min-width: 80px;
+                    font-weight: 500;
+                    border-radius: 6px;
+                    min-width: 90px;
+                    min-height: 36px;
                 }
                 QPushButton:hover {
-                    background-color: #e8f5e8;
-                    color: #1b5e20;
-                    border-color: #66bb6a;
+                    background-color: #eeeeee;
+                    border-color: #757575;
                 }
                 QPushButton:pressed {
-                    background-color: #66bb6a;
-                    color: #ffffff;
-                    border-color: #1b5e20;
+                    background-color: #e0e0e0;
+                    border-color: #424242;
                 }
             """)
             options_btn.clicked.connect(self.show_settings)
@@ -411,10 +451,17 @@ class MainWindow(QMainWindow):
             #     }
             # """)
             
-            # Store reference for theme updates
-            self.nav_widget = nav_widget
+            # Apply polished navigation styling
+            nav_widget.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #f8fdf8, stop:1 #f1f8e9);
+                    border-bottom: 2px solid #c8e6c9;
+                    border-top: 1px solid #e8f5e8;
+                }
+            """)
             
-            # Add to main layout
+            self.nav_widget = nav_widget
             main_layout.addWidget(nav_widget)
             
         except Exception as e:
@@ -799,7 +846,7 @@ class MainWindow(QMainWindow):
         
         # About action
         about_action = QAction('&About', self)
-        about_action.setStatusTip('About Celiogix')
+        about_action.setStatusTip('About CeliacShield')
         about_action.triggered.connect(self.show_about)
         options_menu.addAction(about_action)
         
@@ -924,6 +971,20 @@ class MainWindow(QMainWindow):
                 current_panel.refresh()
             except Exception as e:
                 print(f"Error refreshing panel: {e}")
+    
+    def _handle_sync_update(self, panel: str, success: bool):
+        """Handle sync updates from mobile app."""
+        if success and panel != 'settings':
+            # Find and refresh the corresponding panel
+            panel_map = {
+                'pantry': 1, 'cookbook': 0, 'shopping_list': 2,
+                'menu': 3, 'health_log': 4, 'calendar': 5
+            }
+            if panel in panel_map:
+                widget = self.tab_widget.widget(panel_map[panel])
+                if hasattr(widget, 'refresh'):
+                    widget.refresh()
+                self.status_bar.showMessage(f"Synced {panel} from mobile")
 
     def on_theme_changed(self, theme_id):
         """Handle theme change from theme editor"""
@@ -1022,8 +1083,8 @@ class MainWindow(QMainWindow):
 
     def show_about(self):
         """Show about dialog"""
-        QMessageBox.about(self, "About Celiogix", 
-                         "Celiogix - Celiac Disease Management Application\n\n"
+        QMessageBox.about(self, "About CeliacShield", 
+                         "CeliacShield - Celiac Disease Management Application\n\n"
                          "Built with PySide6\n"
                          "Version 1.0\n\n"
                          "Features:\n"
@@ -1043,6 +1104,9 @@ class MainWindow(QMainWindow):
                                    QMessageBox.No)
         
         if reply == QMessageBox.Yes:
+            # Clean up Bluetooth connection
+            if hasattr(self, 'sync_manager'):
+                self.sync_manager.bluetooth_service.server_socket = None
             event.accept()
         else:
             event.ignore()
@@ -1051,9 +1115,9 @@ class MainWindow(QMainWindow):
 def main():
     """Main entry point"""
     app = QApplication(sys.argv)
-    app.setApplicationName("Celiogix")
+    app.setApplicationName("CeliacShield")
     app.setApplicationVersion("1.0")
-    app.setOrganizationName("Celiogix")
+    app.setOrganizationName("CeliacShield")
     
     window = MainWindow()
     window.show()

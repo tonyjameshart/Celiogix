@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mobile Companion Integration for Celiogix Desktop Application
+Mobile Companion Integration for CeliacShield Desktop Application
 Main integration module that connects all mobile companion features
 """
 
@@ -276,7 +276,7 @@ def create_mobile_companion_demo():
     
     # Create main window
     window = QMainWindow()
-    window.setWindowTitle("Celiogix Mobile Companion - Desktop Command Center")
+    window.setWindowTitle("CeliacShield Mobile Companion - Desktop Command Center")
     window.setGeometry(100, 100, 1200, 800)
     
     # Create central widget with tabs

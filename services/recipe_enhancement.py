@@ -1,6 +1,6 @@
 # path: services/recipe_enhancement.py
 """
-Recipe Enhancement Services for Celiogix
+Recipe Enhancement Services for CeliacShield
 
 Implements advanced recipe features like ranking, scaling, substitution, and conversion.
 """

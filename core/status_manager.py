@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Status Manager for Celiogix Application
+Status Manager for CeliacShield Application
 
 Handles status messages, logging, and application state management.
 """

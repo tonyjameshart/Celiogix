@@ -74,7 +74,7 @@ class ErrorHandler(QObject):
                 logging.StreamHandler(sys.stdout)
             ]
         )
-        self.logger = logging.getLogger('Celiogix')
+        self.logger = logging.getLogger('CeliacShield')
     
     def setup_default_handlers(self):
         """Set up default error handlers"""

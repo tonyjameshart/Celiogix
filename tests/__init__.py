@@ -1,1 +1,1 @@
-# Test package for Celiogix application
+# Test package for CeliacShield application

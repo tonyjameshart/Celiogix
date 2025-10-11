@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Settings Panel for Celiogix Application
+Comprehensive Settings Panel for CeliacShield Application
 Includes: Theme customization, Database settings, Import/Export, Recipe Search, Communication
 """
 
@@ -823,7 +823,7 @@ class SettingsPanel(QWidget):
         bluetooth_layout.addRow("Bluetooth Enabled:", self.bluetooth_enabled)
         
         self.device_name_edit = QLineEdit()
-        self.device_name_edit.setPlaceholderText("Celiogix Device")
+        self.device_name_edit.setPlaceholderText("CeliacShield Device")
         bluetooth_layout.addRow("Device Name:", self.device_name_edit)
         
         self.auto_pair_checkbox = QCheckBox("Auto-pair with known devices")
@@ -1025,7 +1025,7 @@ class SettingsPanel(QWidget):
             bluetooth_enabled = get_setting(db, "bluetooth_enabled", False)
             self.bluetooth_enabled.setChecked(bluetooth_enabled)
             
-            device_name = get_setting(db, "bluetooth_device_name", "Celiogix Device")
+            device_name = get_setting(db, "bluetooth_device_name", "CeliacShield Device")
             self.device_name_edit.setText(device_name)
             
             auto_pair = get_setting(db, "bluetooth_auto_pair", False)

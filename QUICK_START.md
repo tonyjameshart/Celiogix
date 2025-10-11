@@ -124,7 +124,7 @@ show_toast(self.app, "Saved successfully!", "success")
 ## 🐛 TROUBLESHOOTING
 
 **Import errors?** 
-→ Run from: `D:\code\Celiogix\Celiogix\`
+→ Run from: `D:\code\CeliacShield\CeliacShield\`
 
 **Styles don't apply?**
 → Call `apply_modern_theme()` BEFORE creating widgets

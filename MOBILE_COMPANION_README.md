@@ -1,8 +1,8 @@
-# 🌍 Celiogix Mobile Companion Ecosystem
+# 🌍 CeliacShield Mobile Companion Ecosystem
 
 ## Overview
 
-The Celiogix Mobile Companion Ecosystem is a comprehensive celiac disease management solution consisting of:
+The CeliacShield Mobile Companion Ecosystem is a comprehensive celiac disease management solution consisting of:
 
 - **Desktop Application** (Command Center) - Comprehensive management, analytics, and data processing
 - **Mobile Application** (Always-With-You Companion) - Real-time scanning, logging, and location services
@@ -399,7 +399,7 @@ ionic capacitor sync android
 
 ## 🤖 Android AAB Development
 
-### AAB Benefits for Celiogix Mobile
+### AAB Benefits for CeliacShield Mobile
 - **Dynamic Delivery**: Smaller download sizes with on-demand feature modules
 - **App Size Optimization**: Automatic APK generation for different device configurations
 - **Play Store Optimization**: Better optimization for Google Play Store distribution
@@ -419,7 +419,7 @@ cd android
 ./gradlew bundleDebug
 ```
 
-### Key AAB Features for Celiogix
+### Key AAB Features for CeliacShield
 
 #### 📦 Dynamic Feature Modules
 ```gradle
@@ -479,7 +479,7 @@ cd android
 # Use Google Play Console or fastlane
 ```
 
-#### AAB Optimization for Celiogix
+#### AAB Optimization for CeliacShield
 ```gradle
 // android/app/build.gradle
 android {
@@ -507,7 +507,7 @@ android {
 ```
 
 #### Play Store Listing Optimization
-- **App Title**: "Celiogix - Gluten-Free Companion"
+- **App Title**: "CeliacShield - Gluten-Free Companion"
 - **Short Description**: "Smart gluten-free living with barcode scanning, symptom tracking, and restaurant finder"
 - **Full Description**: Include keywords like "celiac disease", "gluten-free", "barcode scanner", "symptom tracker"
 - **Screenshots**: Show barcode scanning, shopping list, restaurant finder, symptom tracking
@@ -577,4 +577,4 @@ This guide covers:
 
 ---
 
-*The Celiogix Mobile Companion Ecosystem represents the future of celiac disease management, combining the power of desktop analytics with the convenience of mobile accessibility to create a comprehensive, always-available support system for the celiac community worldwide.*
+*The CeliacShield Mobile Companion Ecosystem represents the future of celiac disease management, combining the power of desktop analytics with the convenience of mobile accessibility to create a comprehensive, always-available support system for the celiac community worldwide.*

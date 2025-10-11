@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Theme Manager for Celiogix Application
+Theme Manager for CeliacShield Application
 
 Handles all theme-related operations including application, navigation updates,
 and fallback mechanisms.

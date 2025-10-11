@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Demo script for Care Provider system integration
-Shows the complete care provider workflow in Celiogix
+Shows the complete care provider workflow in CeliacShield
 """
 
 import sys
@@ -24,7 +24,7 @@ class CareProviderDemo(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Celiogix Care Provider System Demo")
+        self.setWindowTitle("CeliacShield Care Provider System Demo")
         self.setGeometry(100, 100, 1200, 800)
         
         # Initialize services
@@ -41,7 +41,7 @@ class CareProviderDemo(QMainWindow):
         layout = QVBoxLayout(central_widget)
         
         # Header
-        header_label = QLabel("🏥 Celiogix Care Provider System Demo")
+        header_label = QLabel("🏥 CeliacShield Care Provider System Demo")
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
         layout.addWidget(header_label)
@@ -304,14 +304,14 @@ def main():
     app = QApplication(sys.argv)
     
     # Set application properties
-    app.setApplicationName("Celiogix Care Provider Demo")
+    app.setApplicationName("CeliacShield Care Provider Demo")
     app.setApplicationVersion("1.0")
     
     # Create and show demo window
     demo = CareProviderDemo()
     demo.show()
     
-    print("🏥 Celiogix Care Provider System Demo")
+    print("🏥 CeliacShield Care Provider System Demo")
     print("=" * 50)
     print("Features demonstrated:")
     print("• Care Provider Management")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Core package for Celiogix Application
+Core package for CeliacShield Application
 
 This package contains the core management classes that handle different
 aspects of the application functionality.

@@ -1,10 +1,10 @@
-# 🤖 Android AAB Development Guide for Celiogix Mobile
+# 🤖 Android AAB Development Guide for CeliacShield Mobile
 
 ## Overview
-This guide covers the complete development and deployment process for the Celiogix Mobile Companion as an Android App Bundle (AAB) for Google Play Store distribution.
+This guide covers the complete development and deployment process for the CeliacShield Mobile Companion as an Android App Bundle (AAB) for Google Play Store distribution.
 
 ## 📋 Table of Contents
-1. [AAB Benefits for Celiogix](#aab-benefits-for-celiogix)
+1. [AAB Benefits for CeliacShield](#aab-benefits-for-celiogix)
 2. [Development Environment Setup](#development-environment-setup)
 3. [Project Structure](#project-structure)
 4. [AAB Configuration](#aab-configuration)
@@ -13,9 +13,9 @@ This guide covers the complete development and deployment process for the Celiog
 7. [Testing and Validation](#testing-and-validation)
 8. [Performance Optimization](#performance-optimization)
 
-## 🎯 AAB Benefits for Celiogix
+## 🎯 AAB Benefits for CeliacShield
 
-### Why AAB for Celiogix Mobile?
+### Why AAB for CeliacShield Mobile?
 - **Mobile-First Philosophy**: Optimize for quick capture and instant decisions
 - **Smaller Download Size**: Users download only what they need for their device
 - **Dynamic Feature Delivery**: Load advanced features like restaurant finder on-demand
@@ -284,7 +284,7 @@ cd android
 
 set -e
 
-echo "🚀 Building Celiogix Mobile AAB..."
+echo "🚀 Building CeliacShield Mobile AAB..."
 
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
@@ -319,9 +319,9 @@ echo "📱 AAB location: android/app/build/outputs/bundle/release/app-release.aa
 ```json
 {
   "app_details": {
-    "title": "Celiogix - Gluten-Free Companion",
+    "title": "CeliacShield - Gluten-Free Companion",
     "short_description": "Smart gluten-free living with barcode scanning, symptom tracking, and restaurant finder",
-    "full_description": "Celiogix is your comprehensive gluten-free companion app designed specifically for people with celiac disease and gluten sensitivity. Features include real-time barcode scanning for gluten detection, symptom tracking and health pattern analysis, restaurant finder with gluten-free options, shopping list management, and translation cards for safe dining while traveling.",
+    "full_description": "CeliacShield is your comprehensive gluten-free companion app designed specifically for people with celiac disease and gluten sensitivity. Features include real-time barcode scanning for gluten detection, symptom tracking and health pattern analysis, restaurant finder with gluten-free options, shopping list management, and translation cards for safe dining while traveling.",
     "category": "Medical",
     "content_rating": "Everyone",
     "privacy_policy_url": "https://celiogix.com/privacy",
@@ -763,4 +763,4 @@ export class EncryptionService {
 6. **Test thoroughly** on various device configurations
 7. **Deploy to internal testing** before production release
 
-This guide provides a comprehensive foundation for developing and deploying the Celiogix Mobile Companion as an Android App Bundle. The AAB format will ensure optimal distribution through Google Play Store with smaller download sizes and better user experience.
+This guide provides a comprehensive foundation for developing and deploying the CeliacShield Mobile Companion as an Android App Bundle. The AAB format will ensure optimal distribution through Google Play Store with smaller download sizes and better user experience.

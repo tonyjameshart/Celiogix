@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Custom Widgets for Celiogix Application
+Custom Widgets for CeliacShield Application
 Provides widgets without problematic Qt selection styling
 """
 

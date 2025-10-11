@@ -1,6 +1,6 @@
 # path: services/upc_scanner.py
 """
-UPC Scanner Service for Celiogix
+UPC Scanner Service for CeliacShield
 
 Provides UPC/barcode scanning functionality with gluten-free safety checking.
 """
@@ -10,6 +10,7 @@ import json
 from typing import Dict, Optional, Any, List
 from dataclasses import dataclass
 from datetime import datetime
+from services.nutrition_analyzer import nutrition_analyzer, NutritionData
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ProductInfo:
     gluten_warning: Optional[str]
     ingredients: List[str]
     nutrition_info: Dict[str, Any]
+    detailed_nutrition: Optional[NutritionData]
     image_url: Optional[str]
     source: str
     confidence: float
@@ -68,6 +70,9 @@ class UPCScanner:
                 # Analyze for gluten safety
                 gluten_analysis = self._analyze_gluten_safety(product_data)
                 
+                # Get detailed nutrition analysis
+                detailed_nutrition = self._get_detailed_nutrition(product_data)
+                
                 return ProductInfo(
                     upc=upc_code,
                     name=product_data.get('name', 'Unknown Product'),
@@ -77,6 +82,7 @@ class UPCScanner:
                     gluten_warning=gluten_analysis['warning'],
                     ingredients=product_data.get('ingredients', []),
                     nutrition_info=product_data.get('nutrition', {}),
+                    detailed_nutrition=detailed_nutrition,
                     image_url=product_data.get('image_url'),
                     source=product_data.get('source', 'Unknown'),
                     confidence=gluten_analysis['confidence']
@@ -516,6 +522,41 @@ class UPCScanner:
                 alternatives.extend(alt_list)
         
         return alternatives
+    
+    def _get_detailed_nutrition(self, product_data: Dict) -> Optional[NutritionData]:
+        """Get detailed nutrition analysis for product"""
+        try:
+            # Create mock ingredient for nutrition analysis
+            mock_ingredient = {
+                'name': product_data.get('name', ''),
+                'quantity': 100  # Per 100g serving
+            }
+            
+            # Get nutrition data
+            nutrition_data = nutrition_analyzer.get_ingredient_nutrition(mock_ingredient)
+            
+            # Enhance with product-specific data if available
+            product_nutrition = product_data.get('nutrition', {})
+            if product_nutrition:
+                # Override with actual product data where available
+                if 'calories' in product_nutrition:
+                    nutrition_data.calories = float(product_nutrition['calories'])
+                if 'protein' in product_nutrition:
+                    nutrition_data.protein_g = float(product_nutrition['protein'])
+                if 'carbs' in product_nutrition:
+                    nutrition_data.carbs_g = float(product_nutrition['carbs'])
+                if 'fiber' in product_nutrition:
+                    nutrition_data.fiber_g = float(product_nutrition['fiber'])
+                if 'fat' in product_nutrition:
+                    nutrition_data.fat_g = float(product_nutrition['fat'])
+                if 'sodium' in product_nutrition:
+                    nutrition_data.sodium_mg = float(product_nutrition['sodium'])
+            
+            return nutrition_data
+            
+        except Exception as e:
+            print(f"Error getting detailed nutrition: {e}")
+            return None
 
 
 # Convenience functions for easy importing

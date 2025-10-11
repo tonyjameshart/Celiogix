@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Refactored Main Window for Celiogix Application
+Refactored Main Window for CeliacShield Application
 
 This is a simplified version of the main window that delegates responsibilities
 to specialized manager classes.
@@ -59,7 +59,7 @@ class RefactoredMainWindow(QMainWindow):
     
     def _setup_window_properties(self):
         """Set up basic window properties"""
-        self.setWindowTitle("Celiogix")
+        self.setWindowTitle("Celiac Shield")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(800, 600)
     
@@ -118,6 +118,9 @@ class RefactoredMainWindow(QMainWindow):
             # Guide Panel (index 6)
             guide_panel = GuidePanel(self, self)
             self.ui_manager.add_panel_to_tabs(guide_panel, "Guide")
+            
+            # Set initial active navigation button (Cookbook - index 0)
+            self.ui_manager.set_active_nav_button(0)
             
             self.status_manager.update_status("Panels initialized successfully")
             
@@ -189,6 +192,10 @@ class RefactoredMainWindow(QMainWindow):
             if tab_widget and 0 <= index < tab_widget.count():
                 tab_text = tab_widget.tabText(index)
                 self.status_manager.update_status_with_panel(tab_text)
+                
+                # Update menu button active state
+                if hasattr(self.menu_manager, 'set_active_button'):
+                    self.menu_manager.set_active_button(index)
                 
                 # Refresh the panel if it has a refresh method
                 current_panel = tab_widget.currentWidget()
@@ -270,8 +277,8 @@ class RefactoredMainWindow(QMainWindow):
     
     def show_about(self):
         """Show about dialog"""
-        QMessageBox.about(self, "About Celiogix", 
-                         "Celiogix - Celiac Disease Management Application\n\n"
+        QMessageBox.about(self, "About CeliacShield", 
+                         "CeliacShield - Celiac Disease Management Application\n\n"
                          "Built with PySide6\n"
                          "Version 1.0\n\n"
                          "Features:\n"

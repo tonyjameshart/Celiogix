@@ -16,14 +16,17 @@ def _project_root() -> Path:
 
 
 def _db_path() -> Path:
-    return Path(os.getenv(ENV_VAR) or _project_root() / "data" / "celiogix.db")
+    return Path(os.getenv(ENV_VAR) or _project_root() / "data" / "celiacshield.db")
 
 
 def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.row_factory = sqlite3.Row
+    # Ensure proper text encoding for Unicode characters
+    conn.text_factory = str
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA encoding='UTF-8'")
 
 
 def get_connection() -> sqlite3.Connection:

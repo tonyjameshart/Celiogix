@@ -265,12 +265,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     # Insert default categories
     _insert_default_categories(conn)
     
-    # Add missing columns to existing tables
-    _add_col(conn, "recipes", "category TEXT DEFAULT 'Main Course'")
-    _add_col(conn, "recipes", "description TEXT DEFAULT ''")
-    _add_col(conn, "shopping_list", "item_name TEXT")
-    _add_col(conn, "health_log", "meal_type TEXT DEFAULT 'Breakfast'")
-    
     # Create pantry_items view as alias for pantry table
     conn.execute("DROP VIEW IF EXISTS pantry_items")
     conn.execute("CREATE VIEW pantry_items AS SELECT * FROM pantry")
@@ -320,6 +314,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )"""
     )
     _create_indexes(conn, "health_log", [("idx_health_dt", "date, time")])
+
+    # Add missing columns to existing tables
+    _add_col(conn, "recipes", "category TEXT DEFAULT 'Main Course'")
+    _add_col(conn, "recipes", "description TEXT DEFAULT ''")
+    _add_col(conn, "shopping_list", "item_name TEXT")
+    _add_col(conn, "health_log", "meal_type TEXT DEFAULT 'Breakfast'")
 
     # Gluten Guardian enhancements
     conn.execute(

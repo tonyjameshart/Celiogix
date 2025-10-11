@@ -1,6 +1,6 @@
 # path: utils/custom_delegates.py
 """
-Custom QStyledItemDelegate implementations for Celiogix application
+Custom QStyledItemDelegate implementations for CeliacShield application
 """
 
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle

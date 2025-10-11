@@ -20,6 +20,8 @@ from services.mobile_sync import (
     get_mobile_sync_service, BarcodeScanData, SymptomLogData, 
     MealLogData, RestaurantData, TravelKitData, ShoppingListItemData
 )
+from services.restaurant_finder import restaurant_finder
+from services.smart_shopping import smart_shopping_service
 
 
 class MobileCompanionPanel(ContextMenuMixin, BasePanel):
@@ -1093,27 +1095,54 @@ Average Severity: {sum(log.severity for log in logs) / len(logs):.1f}/10
             self.mobile_sync.enable_auto_sync(interval)
     
     def search_nearby_restaurants(self):
-        """Search for nearby restaurants"""
+        """Search for nearby restaurants using enhanced restaurant finder"""
         # In a real implementation, this would get actual GPS coordinates
         # For demo, use default coordinates
         latitude, longitude = 40.7128, -74.0060  # New York City
         
         radius = self.radius_spin.value()
-        nearby_restaurants = self.mobile_sync.get_nearby_restaurants(latitude, longitude, radius)
         
-        self.restaurant_table.setRowCount(len(nearby_restaurants))
-        for row, restaurant in enumerate(nearby_restaurants):
-            distance = self.mobile_sync._calculate_distance(
-                latitude, longitude, restaurant.latitude, restaurant.longitude
-            )
+        # Use enhanced restaurant finder service
+        try:
+            nearby_restaurants = restaurant_finder.find_nearby_restaurants(latitude, longitude, radius)
             
-            self.restaurant_table.setItem(row, 0, QTableWidgetItem(restaurant.name))
-            self.restaurant_table.setItem(row, 1, QTableWidgetItem(restaurant.cuisine_type))
-            self.restaurant_table.setItem(row, 2, QTableWidgetItem(f"{distance:.1f} km"))
-            self.restaurant_table.setItem(row, 3, QTableWidgetItem("✅ Yes" if restaurant.gluten_free_options else "❌ No"))
-            self.restaurant_table.setItem(row, 4, QTableWidgetItem("✅ Yes" if restaurant.dedicated_kitchen else "❌ No"))
-            self.restaurant_table.setItem(row, 5, QTableWidgetItem(restaurant.staff_training.title()))
-            self.restaurant_table.setItem(row, 6, QTableWidgetItem(f"{restaurant.user_rating:.1f}⭐"))
+            self.restaurant_table.setRowCount(len(nearby_restaurants))
+            for row, restaurant in enumerate(nearby_restaurants):
+                self.restaurant_table.setItem(row, 0, QTableWidgetItem(restaurant.name))
+                self.restaurant_table.setItem(row, 1, QTableWidgetItem(restaurant.cuisine_type))
+                self.restaurant_table.setItem(row, 2, QTableWidgetItem(f"{restaurant.distance_km:.1f} km"))
+                self.restaurant_table.setItem(row, 3, QTableWidgetItem("✅ Yes" if restaurant.gluten_free_menu else "❌ No"))
+                self.restaurant_table.setItem(row, 4, QTableWidgetItem("✅ Yes" if restaurant.dedicated_fryer else "❌ No"))
+                self.restaurant_table.setItem(row, 5, QTableWidgetItem(restaurant.staff_training.title()))
+                self.restaurant_table.setItem(row, 6, QTableWidgetItem(f"{restaurant.rating:.1f}⭐ (Safety: {restaurant.celiac_friendly_score})"))
+                
+                # Color code by safety score
+                safety_item = self.restaurant_table.item(row, 6)
+                if restaurant.celiac_friendly_score >= 80:
+                    safety_item.setBackground(Qt.green)
+                elif restaurant.celiac_friendly_score >= 60:
+                    safety_item.setBackground(Qt.yellow)
+                else:
+                    safety_item.setBackground(Qt.red)
+                    
+        except Exception as e:
+            QMessageBox.warning(self, "Restaurant Search Error", f"Failed to search restaurants: {str(e)}")
+            # Fallback to original method
+            nearby_restaurants = self.mobile_sync.get_nearby_restaurants(latitude, longitude, radius)
+            
+            self.restaurant_table.setRowCount(len(nearby_restaurants))
+            for row, restaurant in enumerate(nearby_restaurants):
+                distance = self.mobile_sync._calculate_distance(
+                    latitude, longitude, restaurant.latitude, restaurant.longitude
+                )
+                
+                self.restaurant_table.setItem(row, 0, QTableWidgetItem(restaurant.name))
+                self.restaurant_table.setItem(row, 1, QTableWidgetItem(restaurant.cuisine_type))
+                self.restaurant_table.setItem(row, 2, QTableWidgetItem(f"{distance:.1f} km"))
+                self.restaurant_table.setItem(row, 3, QTableWidgetItem("✅ Yes" if restaurant.gluten_free_options else "❌ No"))
+                self.restaurant_table.setItem(row, 4, QTableWidgetItem("✅ Yes" if restaurant.dedicated_kitchen else "❌ No"))
+                self.restaurant_table.setItem(row, 5, QTableWidgetItem(restaurant.staff_training.title()))
+                self.restaurant_table.setItem(row, 6, QTableWidgetItem(f"{restaurant.user_rating:.1f}⭐"))
     
     def show_translation_card(self):
         """Show translation card for selected language"""

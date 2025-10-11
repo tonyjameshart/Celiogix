@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Launcher script for the Celiogix PySide6 application.
+Launcher script for the CeliacShield PySide6 application.
 
 This entry point wires up the refactored main window that delegates
 responsibilities to the specialized manager classes.
@@ -38,11 +38,11 @@ def main() -> int:
 
     try:
         app = QApplication(sys.argv)
-        app.setApplicationName("Celiogix")
+        app.setApplicationName("CeliacShield")
         app.setApplicationVersion("1.0")
-        app.setOrganizationName("Celiogix")
+        app.setOrganizationName("CeliacShield")
 
-        logger.info("Launching Celiogix PySide6 Application (refactored window)...")
+        logger.info("Launching CeliacShield PySide6 Application (refactored window)...")
 
         window = RefactoredMainWindow()
         window.show()
@@ -50,7 +50,7 @@ def main() -> int:
         return app.exec()
 
     except Exception as exc:  # pragma: no cover - fatal startup path
-        logger.critical("Failed to launch Celiogix application: %s", exc, exc_info=True)
+        logger.critical("Failed to launch CeliacShield application: %s", exc, exc_info=True)
         return 1
 
 

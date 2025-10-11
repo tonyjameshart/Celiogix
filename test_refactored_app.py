@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for the refactored Celiogix application
+Test script for the refactored CeliacShield application
 
 This script tests the refactored application to ensure all fixes work correctly.
 """
@@ -29,15 +29,15 @@ def setup_logging():
 
 def test_application():
     """Test the refactored application"""
-    print("🧪 Testing Refactored Celiogix Application...")
+    print("🧪 Testing Refactored CeliacShield Application...")
     print("=" * 50)
     
     try:
         # Create application
         app = QApplication(sys.argv)
-        app.setApplicationName("Celiogix - Test")
+        app.setApplicationName("CeliacShield - Test")
         app.setApplicationVersion("1.0")
-        app.setOrganizationName("Celiogix")
+        app.setOrganizationName("CeliacShield")
         
         print("✅ QApplication created successfully")
         

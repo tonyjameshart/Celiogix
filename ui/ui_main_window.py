@@ -92,7 +92,7 @@ class Ui_MainWindow(object):
     # setupUi
 
     def retranslateUi(self, MainWindow):
-        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"Celiogix - PySide6", None))
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"CeliacShield - PySide6", None))
         self.actionExit.setText(QCoreApplication.translate("MainWindow", u"E&xit", None))
 #if QT_CONFIG(shortcut)
         self.actionExit.setShortcut(QCoreApplication.translate("MainWindow", u"Ctrl+Q", None))

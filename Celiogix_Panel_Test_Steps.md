@@ -1,6 +1,6 @@
-# Celiogix Application - Panel Test Steps
+# CeliacShield Application - Panel Test Steps
 
-This document provides comprehensive test steps for each panel in the Celiogix application, a gluten-free lifestyle management system built with PySide6.
+This document provides comprehensive test steps for each panel in the CeliacShield application, a gluten-free lifestyle management system built with PySide6.
 
 ## Table of Contents
 
@@ -743,11 +743,11 @@ This document provides comprehensive test steps for each panel in the Celiogix a
 
 ## **Notes**
 
-- This test plan covers all major panels in the Celiogix application
+- This test plan covers all major panels in the CeliacShield application
 - Each test step should be executed systematically
 - Results should be documented for regression testing
 - Regular updates to this test plan should be made as new features are added
 
 **Last Updated:** January 2025  
 **Version:** 1.0  
-**Application:** Celiogix - Gluten-Free Lifestyle Management System
+**Application:** CeliacShield - Gluten-Free Lifestyle Management System

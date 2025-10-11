@@ -14,6 +14,7 @@ from PySide6.QtGui import QFont
 
 from panels.base_panel import BasePanel
 from panels.context_menu_mixin import ShoppingListContextMenuMixin
+from services.enhanced_features import enhanced_features
 
 
 class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
@@ -143,10 +144,18 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
         self.import_btn = QPushButton("Import List")
         self.import_btn.clicked.connect(self.import_shopping_list)
         
+        self.smart_suggestions_btn = QPushButton("Smart Suggestions")
+        self.smart_suggestions_btn.clicked.connect(self.show_smart_suggestions)
+        
+        self.optimize_trip_btn = QPushButton("Optimize Trip")
+        self.optimize_trip_btn.clicked.connect(self.optimize_shopping_trip)
+        
         button_layout.addWidget(self.remove_btn)
         button_layout.addWidget(self.clear_btn)
         button_layout.addWidget(self.export_btn)
         button_layout.addWidget(self.import_btn)
+        button_layout.addWidget(self.smart_suggestions_btn)
+        button_layout.addWidget(self.optimize_trip_btn)
         button_layout.addWidget(self.print_btn)
         button_layout.addStretch()
         
@@ -172,7 +181,9 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
             
             # Load shopping list items from database
             cursor.execute("""
-                SELECT store, name, '1', category, purchased, notes, created_at
+                SELECT store, item_name, quantity, category, 
+                       CASE WHEN priority = 'purchased' THEN 1 ELSE 0 END as purchased, 
+                       notes, created_date
                 FROM shopping_list 
                 ORDER BY id DESC
             """)
@@ -182,7 +193,7 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
             # Clear existing data
             self.shopping_table.setRowCount(len(items))
             
-            for row, (store, item_name, quantity, category, purchased, notes, created_at) in enumerate(items):
+            for row, (store, item_name, quantity, category, purchased, notes, created_date) in enumerate(items):
                 self.shopping_table.setItem(row, 0, QTableWidgetItem(store or ""))
                 self.shopping_table.setItem(row, 1, QTableWidgetItem(item_name or ""))
                 self.shopping_table.setItem(row, 2, QTableWidgetItem(quantity or ""))
@@ -311,18 +322,11 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
     
     def _add_shopping_item(self, item, quantity, category, store="Grocery Store"):
         """Add shopping item programmatically (used by menu planning)"""
-        row = self.shopping_table.rowCount()
-        self.shopping_table.insertRow(row)
-        self.shopping_table.setItem(row, 0, QTableWidgetItem(store))
-        self.shopping_table.setItem(row, 1, QTableWidgetItem(item))
-        self.shopping_table.setItem(row, 2, QTableWidgetItem(quantity))
-        self.shopping_table.setItem(row, 3, QTableWidgetItem(category))
-        
-        # Create checkbox for purchased column
-        purchased_item = QTableWidgetItem()
-        purchased_item.setCheckState(Qt.Unchecked)
-        purchased_item.setText("No")
-        self.shopping_table.setItem(row, 4, purchased_item)
+        # Save to database first
+        item_id = self._save_shopping_item_to_database(item, quantity, store, category)
+        if item_id:
+            # Refresh the display to show the new item
+            self.refresh()
     
     def on_item_changed(self, item):
         """Handle item changes in the table"""
@@ -1032,9 +1036,9 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
             
             # Insert item
             cursor.execute("""
-                INSERT INTO shopping_list (name, item_name, store, category, created_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (item_name, item_name, store, category))
+                INSERT INTO shopping_list (item, item_name, quantity, store, category, created_date)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (item_name, item_name, quantity, store, category))
             
             item_id = cursor.lastrowid
             db.commit()
@@ -1043,3 +1047,11 @@ class ShoppingListPanel(ShoppingListContextMenuMixin, BasePanel):
         except Exception as e:
             print(f"Error saving shopping list item to database: {e}")
             return None
+    
+    def show_smart_suggestions(self):
+        """Show smart product suggestions"""
+        enhanced_features.show_smart_suggestions(self)
+    
+    def optimize_shopping_trip(self):
+        """Optimize shopping trip"""
+        enhanced_features.optimize_shopping_trip(self)
